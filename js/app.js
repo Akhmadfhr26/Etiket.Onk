@@ -1,0 +1,842 @@
+/* ============================================================
+   SISTEM ETIKET KEMOTERAPI — app.js
+   ============================================================ */
+
+let CURRENT_USER = null;
+let CACHE = { etiket: [], pasien: [], obat: [], settings: {} };
+let CURRENT_ROUTE = 'dashboard';
+let PREFILL_ENTRI = null; // dipakai saat "Gunakan" dari Daftar Pasien
+
+/* ---------------- THEME ---------------- */
+function setTheme(mode) {
+  document.body.setAttribute('data-theme', mode);
+  localStorage.setItem('etiket_theme', mode);
+  document.getElementById('btnThemeModern').classList.toggle('active', mode === 'modern');
+  document.getElementById('btnThemeClassic').classList.toggle('active', mode === 'classic');
+}
+(function initTheme() {
+  setTheme(localStorage.getItem('etiket_theme') || 'modern');
+})();
+
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('collapsed');
+}
+
+/* ---------------- AUTH ---------------- */
+async function checkSession() {
+  const { data } = await supabase.auth.getSession();
+  if (data && data.session) {
+    CURRENT_USER = data.session.user;
+    showApp();
+  } else {
+    showLogin();
+  }
+}
+
+function showLogin() {
+  document.getElementById('loginScreen').classList.remove('hidden');
+  document.getElementById('appShell').classList.add('hidden');
+}
+
+async function showApp() {
+  document.getElementById('loginScreen').classList.add('hidden');
+  document.getElementById('appShell').classList.remove('hidden');
+  document.getElementById('sbUserEmail').textContent = CURRENT_USER ? CURRENT_USER.email : '';
+  await loadAllData();
+  navigate('dashboard');
+}
+
+async function doLogin() {
+  const email = document.getElementById('loginEmail').value.trim();
+  const password = document.getElementById('loginPassword').value;
+  const msgEl = document.getElementById('loginMsg');
+  msgEl.innerHTML = '';
+  if (!email || !password) {
+    msgEl.innerHTML = '<div class="msg err">Email dan password wajib diisi.</div>';
+    return;
+  }
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  if (error) {
+    msgEl.innerHTML = '<div class="msg err">' + escapeHtml(error.message) + '</div>';
+    return;
+  }
+  CURRENT_USER = data.user;
+  showApp();
+}
+
+async function doLogout() {
+  await supabase.auth.signOut();
+  CURRENT_USER = null;
+  showLogin();
+}
+
+/* ---------------- DATA LOADING ---------------- */
+async function loadAllData() {
+  const [etiketRes, pasienRes, obatRes, settingsRes] = await Promise.all([
+    supabase.from('etiket').select('*').order('created_at', { ascending: false }),
+    supabase.from('pasien').select('*').order('nama_pasien', { ascending: true }),
+    supabase.from('obat').select('*').order('nama_obat', { ascending: true }),
+    supabase.from('pengaturan').select('*')
+  ]);
+  CACHE.etiket = etiketRes.data || [];
+  CACHE.pasien = pasienRes.data || [];
+  CACHE.obat = obatRes.data || [];
+  CACHE.settings = {};
+  (settingsRes.data || []).forEach(r => CACHE.settings[r.key] = r.value);
+  document.getElementById('sbNamaRS').textContent = CACHE.settings.nama_rs || 'Etiket Kemo';
+}
+
+/* ---------------- ROUTING ---------------- */
+const PAGES = {
+  dashboard:  { title: 'Daftar Etiket',    sub: 'Semua etiket yang tersimpan',              render: renderDashboard },
+  entri:      { title: 'Entri Data Baru',  sub: 'Tambah atau perbarui etiket pasien',        render: renderEntri },
+  pasien:     { title: 'Daftar Pasien',    sub: 'Riwayat kunjungan tiap pasien',             render: renderPasien },
+  obat:       { title: 'Database Obat',    sub: 'Nama obat & konsentrasi untuk kalkulasi',   render: renderObat },
+  pengaturan: { title: 'Pengaturan',       sub: 'Identitas rumah sakit',                     render: renderPengaturan }
+};
+
+async function navigate(route) {
+  if (!PAGES[route]) route = 'dashboard';
+  CURRENT_ROUTE = route;
+  document.querySelectorAll('.nav-item').forEach(el => {
+    el.classList.toggle('active', el.getAttribute('data-route') === route);
+  });
+  document.getElementById('pageTitle').textContent = PAGES[route].title;
+  document.getElementById('pageSub').textContent = PAGES[route].sub;
+  const content = document.getElementById('content');
+  content.innerHTML = '<p class="muted">Memuat...</p>';
+  await PAGES[route].render(content);
+}
+
+/* ---------------- HELPERS ---------------- */
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[c]));
+}
+function fmtDate(d) {
+  if (!d) return '';
+  const dt = new Date(d);
+  if (isNaN(dt.getTime())) return String(d);
+  return dt.toLocaleDateString('id-ID');
+}
+function fmtDateTime(d) {
+  if (!d) return '';
+  const dt = new Date(d);
+  if (isNaN(dt.getTime())) return String(d);
+  return dt.toLocaleDateString('id-ID') + ' ' + dt.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+}
+function toISODateInput(d) {
+  if (!d) return '';
+  const dt = new Date(d);
+  if (isNaN(dt.getTime())) return '';
+  return dt.toISOString().slice(0, 10);
+}
+function isoLocalFromInput(v) {
+  // v = value dari <input type=datetime-local>, sudah waktu lokal
+  if (!v) return null;
+  return new Date(v).toISOString();
+}
+function computeBud(item) {
+  if (item.tanggal_bud) return fmtDateTime(item.tanggal_bud);
+  if (item.tanggal_dibuat && item.bud_durasi_jam) {
+    const base = new Date(item.tanggal_dibuat);
+    const bud = new Date(base.getTime() + parseFloat(item.bud_durasi_jam) * 3600000);
+    return fmtDateTime(bud.toISOString());
+  }
+  return '';
+}
+function nextEtiketId() {
+  const n = (CACHE.etiket.length || 0) + 1;
+  // hindari tabrakan id kalau sudah pernah dihapus di tengah
+  let candidate, tries = 0;
+  do {
+    candidate = 'inj-' + String(n + tries).padStart(3, '0');
+    tries++;
+  } while (CACHE.etiket.some(e => e.id === candidate) && tries < 1000);
+  return candidate;
+}
+function toast(container, type, text) {
+  container.insertAdjacentHTML('afterbegin', `<div class="msg ${type}">${escapeHtml(text)}</div>`);
+}
+
+/* ============================================================
+   HALAMAN: DASHBOARD / DAFTAR ETIKET
+   ============================================================ */
+function renderDashboard(content) {
+  const rows = CACHE.etiket;
+  const dateSet = Array.from(new Set(rows.map(r => toISODateInput(r.tanggal_dibuat)).filter(Boolean))).sort().reverse();
+
+  content.innerHTML = `
+    <div class="stat-row">
+      <div class="stat-box"><div class="num">${rows.length}</div><div class="lab">Total Etiket</div></div>
+      <div class="stat-box"><div class="num">${CACHE.pasien.length}</div><div class="lab">Total Pasien</div></div>
+      <div class="stat-box"><div class="num">${Array.from(new Set(rows.map(r=>r.batch_id).filter(Boolean))).length}</div><div class="lab">Total Kunjungan (Batch)</div></div>
+    </div>
+    <div class="card">
+      <div class="toolbar">
+        <input type="text" id="searchEtiket" class="search-box" placeholder="Cari nama pasien / No RM / obat...">
+        <div class="spacer"></div>
+        <button class="btn secondary" onclick="navigate('entri')">➕ Entri Baru</button>
+        <button class="btn" onclick="cetakTerpilih('label')">🏷️ Cetak Label Obat</button>
+        <button class="btn" onclick="cetakTerpilih('identitas')">🪪 Cetak Label Identitas</button>
+        <button class="btn danger" onclick="hapusTerpilih()">🗑️ Hapus Terpilih</button>
+      </div>
+      <div class="chip-row" id="dateChips">
+        <span class="chip active" data-d="" onclick="filterByDate('')">Semua Tanggal</span>
+        ${dateSet.map(d => `<span class="chip" data-d="${d}" onclick="filterByDate('${d}')">${fmtDate(d)}</span>`).join('')}
+      </div>
+      <div style="overflow-x:auto;">
+        <table class="data-grid" id="etiketTable">
+          <thead>
+            <tr>
+              <th class="checkbox-cell"><input type="checkbox" onclick="toggleAllRows(this)"></th>
+              <th>Pasien / No RM</th>
+              <th>Obat &amp; Dosis</th>
+              <th>Hari Ke</th>
+              <th>Tanggal Dibuat</th>
+              <th>BUD (EXP)</th>
+              <th>Petugas</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="etiketTbody"></tbody>
+        </table>
+      </div>
+    </div>
+  `;
+  document.getElementById('searchEtiket').addEventListener('input', renderEtiketRows);
+  window._activeDateFilter = '';
+  renderEtiketRows();
+}
+
+function filterByDate(d) {
+  window._activeDateFilter = d;
+  document.querySelectorAll('#dateChips .chip').forEach(c => c.classList.toggle('active', c.getAttribute('data-d') === d));
+  renderEtiketRows();
+}
+
+function renderEtiketRows() {
+  const q = (document.getElementById('searchEtiket')?.value || '').toLowerCase().trim();
+  const dateFilter = window._activeDateFilter || '';
+  const rows = CACHE.etiket.filter(r => {
+    if (dateFilter && toISODateInput(r.tanggal_dibuat) !== dateFilter) return false;
+    if (!q) return true;
+    return [r.nama_pasien, r.no_rm, r.obat_dosis, r.nama_obat].some(v => String(v || '').toLowerCase().includes(q));
+  });
+  const tbody = document.getElementById('etiketTbody');
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="8" class="muted" style="text-align:center;padding:24px;">Tidak ada data.</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td class="checkbox-cell"><input type="checkbox" class="row-check" value="${r.id}"></td>
+      <td><b>${escapeHtml(r.nama_pasien)}</b><br><span class="muted rm-code">${escapeHtml(r.no_rm)}</span></td>
+      <td>${escapeHtml(r.obat_dosis)}</td>
+      <td>${r.hari_ke ? '<span class="badge">H-' + r.hari_ke + '</span>' : ''}</td>
+      <td>${fmtDateTime(r.tanggal_dibuat)}</td>
+      <td>${computeBud(r)}</td>
+      <td>${escapeHtml(r.petugas || '')}</td>
+      <td class="actions-cell">
+        <button class="icon-btn" title="Edit" onclick="editEtiket('${r.id}')">✏️</button>
+        <button class="icon-btn danger" title="Hapus" onclick="hapusSatuEtiket('${r.id}')">🗑️</button>
+      </td>
+    </tr>
+  `).join('');
+}
+
+function toggleAllRows(cb) {
+  document.querySelectorAll('.row-check').forEach(c => c.checked = cb.checked);
+}
+function getCheckedIds() {
+  return Array.from(document.querySelectorAll('.row-check:checked')).map(c => c.value);
+}
+
+function cetakTerpilih(jenis) {
+  const ids = getCheckedIds();
+  if (!ids.length) { alert('Pilih minimal satu etiket dulu (centang di tabel).'); return; }
+  const page = jenis === 'identitas' ? 'print/label-identitas.html' : 'print/label.html';
+  window.open(page + '?ids=' + encodeURIComponent(ids.join(',')), '_blank');
+}
+
+async function hapusTerpilih() {
+  const ids = getCheckedIds();
+  if (!ids.length) { alert('Pilih minimal satu etiket dulu.'); return; }
+  if (!confirm('Hapus ' + ids.length + ' etiket terpilih? Tindakan ini tidak bisa dibatalkan.')) return;
+  const { error } = await supabase.from('etiket').delete().in('id', ids);
+  if (error) { alert('Gagal menghapus: ' + error.message); return; }
+  await loadAllData();
+  navigate('dashboard');
+}
+
+async function hapusSatuEtiket(id) {
+  if (!confirm('Hapus etiket ini?')) return;
+  const { error } = await supabase.from('etiket').delete().eq('id', id);
+  if (error) { alert('Gagal menghapus: ' + error.message); return; }
+  await loadAllData();
+  navigate('dashboard');
+}
+
+function editEtiket(id) {
+  const row = CACHE.etiket.find(r => r.id === id);
+  if (!row) return;
+  PREFILL_ENTRI = {
+    editId: row.id,
+    namaPasien: row.nama_pasien, noRM: row.no_rm, tanggalLahir: toISODateInput(row.tanggal_lahir),
+    lokasi: row.lokasi,
+    tanggalMulai: row.tanggal_dibuat ? new Date(row.tanggal_dibuat).toISOString().slice(0,16) : '',
+    items: [{
+      obatNama: row.nama_obat, dosisMg: row.dosis_mg, obatDosis: row.obat_dosis,
+      ambil: row.ambil, sediaan: row.sediaan,
+      namaPelarut: row.nama_pelarut, volPelarut: row.volume_pelarut_ml, caraPemberian: row.cara_pemberian,
+      pelarut: row.pelarut, hariKe: row.hari_ke, budDurasi: row.bud_durasi_jam
+    }]
+  };
+  navigate('entri');
+}
+
+/* ============================================================
+   HALAMAN: ENTRI DATA BARU
+   ============================================================ */
+let itemUid = 0;
+
+function renderEntri(content) {
+  const prefill = PREFILL_ENTRI;
+  PREFILL_ENTRI = null;
+  itemUid = 0;
+
+  content.innerHTML = `
+    <div id="entriMsg"></div>
+    <div class="card">
+      <h2>Data Pasien</h2>
+      <div class="row3">
+        <div>
+          <label>No RM *</label>
+          <input type="text" id="f_noRM" list="pasienRmList" placeholder="000123456" oninput="lookupPasienByRM()">
+          <datalist id="pasienRmList">${CACHE.pasien.map(p => `<option value="${escapeHtml(p.no_rm)}">${escapeHtml(p.nama_pasien)}</option>`).join('')}</datalist>
+        </div>
+        <div>
+          <label>Nama Pasien *</label>
+          <input type="text" id="f_namaPasien" placeholder="Nama lengkap">
+        </div>
+        <div>
+          <label>Tanggal Lahir</label>
+          <input type="date" id="f_tanggalLahir">
+        </div>
+      </div>
+      <div class="row2">
+        <div>
+          <label>Lokasi / Ruang</label>
+          <input type="text" id="f_lokasi" placeholder="ENGGANG LT.3 / KAMAR 305 / BED 03">
+        </div>
+        <div>
+          <label>Tanggal &amp; Jam Kemoterapi (Hari ke-1) *</label>
+          <input type="datetime-local" id="f_tanggalMulai" onchange="updateAllTanggal()">
+        </div>
+      </div>
+      <div id="riwayatBanner"></div>
+    </div>
+
+    <div class="card">
+      <h2>Regimen Obat</h2>
+      <div id="regimenContainer"></div>
+      <button class="btn secondary" type="button" onclick="tambahRegimenItem()">➕ Tambah Obat</button>
+    </div>
+
+    <div class="card">
+      <button class="btn" onclick="simpanEntriBatch()">💾 Simpan Semua</button>
+      <button class="btn ghost" onclick="navigate('dashboard')">Batal</button>
+    </div>
+    <datalist id="daftarObatList">${CACHE.obat.map(o => `<option value="${escapeHtml(o.nama_obat)}">`).join('')}</datalist>
+  `;
+
+  if (prefill) {
+    document.getElementById('f_noRM').value = prefill.noRM || '';
+    document.getElementById('f_namaPasien').value = prefill.namaPasien || '';
+    document.getElementById('f_tanggalLahir').value = prefill.tanggalLahir || '';
+    document.getElementById('f_lokasi').value = prefill.lokasi || '';
+    document.getElementById('f_tanggalMulai').value = prefill.tanggalMulai || defaultTanggalMulai();
+    document.getElementById('regimenContainer').dataset.editId = prefill.editId || '';
+    (prefill.items || []).forEach(it => tambahRegimenItem(it));
+    if (!prefill.items || !prefill.items.length) tambahRegimenItem();
+    if (prefill.noRM) tampilkanRiwayat(prefill.noRM, /*silent*/true);
+  } else {
+    document.getElementById('f_tanggalMulai').value = defaultTanggalMulai();
+    tambahRegimenItem();
+  }
+}
+
+function defaultTanggalMulai() {
+  const d = new Date();
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().slice(0, 16);
+}
+
+function lookupPasienByRM() {
+  const rm = document.getElementById('f_noRM').value.trim();
+  const p = CACHE.pasien.find(x => x.no_rm === rm);
+  if (p) {
+    document.getElementById('f_namaPasien').value = p.nama_pasien;
+    document.getElementById('f_tanggalLahir').value = toISODateInput(p.tanggal_lahir);
+    tampilkanRiwayat(rm);
+  } else {
+    document.getElementById('riwayatBanner').innerHTML = '';
+  }
+}
+
+function tampilkanRiwayat(noRM, silent) {
+  const batches = getBatchesForPasien(noRM);
+  const el = document.getElementById('riwayatBanner');
+  if (!batches.length) { el.innerHTML = ''; return; }
+  el.innerHTML = `
+    <div class="hint" style="margin-top:10px;">Pasien ini punya ${batches.length} riwayat kunjungan.
+    <select id="riwayatPicker" onchange="terapkanRiwayat(this.value)">
+      <option value="">— pilih kunjungan untuk isi otomatis regimen —</option>
+      ${batches.map((b,i) => `<option value="${i}">${fmtDateTime(b.tanggal)} — ${escapeHtml(b.ringkasan)}</option>`).join('')}
+    </select></div>
+  `;
+}
+
+function getBatchesForPasien(noRM) {
+  const rows = CACHE.etiket.filter(r => r.no_rm === noRM);
+  const map = {};
+  rows.forEach(r => {
+    const bid = r.batch_id || r.id;
+    if (!map[bid]) map[bid] = { tanggal: r.tanggal_dibuat, items: [] };
+    if (r.tanggal_dibuat && (!map[bid].tanggal || new Date(r.tanggal_dibuat) > new Date(map[bid].tanggal))) map[bid].tanggal = r.tanggal_dibuat;
+    map[bid].items.push(r);
+  });
+  const list = Object.values(map);
+  list.forEach(b => b.ringkasan = Array.from(new Set(b.items.map(i=>i.nama_obat).filter(Boolean))).join(', ') || '(tanpa nama obat)');
+  list.sort((a,b) => new Date(b.tanggal||0) - new Date(a.tanggal||0));
+  return list;
+}
+
+function terapkanRiwayat(idx) {
+  if (idx === '') return;
+  const noRM = document.getElementById('f_noRM').value.trim();
+  const batch = getBatchesForPasien(noRM)[parseInt(idx, 10)];
+  if (!batch) return;
+  document.getElementById('regimenContainer').innerHTML = '';
+  batch.items.forEach(r => tambahRegimenItem({
+    obatNama: r.nama_obat, dosisMg: r.dosis_mg, obatDosis: r.obat_dosis,
+    ambil: r.ambil, sediaan: r.sediaan, namaPelarut: r.nama_pelarut,
+    volPelarut: r.volume_pelarut_ml, caraPemberian: r.cara_pemberian,
+    pelarut: r.pelarut, hariKe: r.hari_ke, budDurasi: r.bud_durasi_jam
+  }));
+}
+
+function itemTemplate(uid) {
+  return `
+  <div class="regimen-item" id="item_${uid}" data-uid="${uid}">
+    <div class="item-head">
+      <span class="item-title"><span class="item-badge item-num"></span>Obat</span>
+      <button type="button" class="btn ghost" style="padding:4px 10px;" onclick="hapusRegimenItem(${uid})">🗑 Hapus</button>
+    </div>
+    <label>Nama Obat (ketik untuk cari) *</label>
+    <input type="text" id="obatNama_${uid}" list="daftarObatList" placeholder="Ketik nama obat..." oninput="hitungOtomatis(${uid})">
+    <div class="row2">
+      <div><label>Dosis Diminta (mg)</label><input type="number" id="dosisMg_${uid}" step="0.01" oninput="hitungOtomatis(${uid})"></div>
+      <div><label>Konsentrasi (otomatis)</label><input type="text" id="konsentrasiInfo_${uid}" disabled></div>
+    </div>
+    <div class="calc-box hidden" id="calcBox_${uid}">Volume yang diambil: <b id="calcResult_${uid}">-</b> mL</div>
+    <label>Nama Obat &amp; Dosis (tampil di etiket) *</label>
+    <input type="text" id="obatDosis_${uid}" placeholder="Ondansetron Injeksi (3 mg)">
+    <div class="row2">
+      <div><label>Ambil (Volume Diambil) *</label><input type="text" id="ambil_${uid}" placeholder="1.5 mL" oninput="hitungTotalVolume(${uid})"></div>
+      <div><label>Sediaan</label><input type="text" id="sediaan_${uid}" placeholder="4 mg / 2 mL"></div>
+    </div>
+    <div class="subsection-divider">Pelarut</div>
+    <label>Nama Pelarut</label>
+    <input type="text" id="namaPelarut_${uid}" placeholder="NaCl 0.9%" oninput="composePelarut(${uid})">
+    <div class="row2">
+      <div><label>Volume Pelarut (mL)</label><input type="number" id="volPelarut_${uid}" step="0.01" oninput="composePelarut(${uid}); hitungTotalVolume(${uid})"></div>
+      <div><label>Cara Pemberian</label><input type="text" id="caraPemberian_${uid}" placeholder="Bolus Pelan" oninput="composePelarut(${uid})"></div>
+    </div>
+    <label>Pelarut (tampil di etiket)</label>
+    <input type="text" id="pelarut_${uid}" placeholder="Terisi otomatis dari field di atas">
+    <div class="calc-box hidden" id="totalBox_${uid}">Total Volume: <b id="totalResult_${uid}">-</b> mL</div>
+    <div class="subsection-divider">Jadwal item ini</div>
+    <div class="row2">
+      <div><label>Hari Ke-</label><input type="number" id="hariKe_${uid}" min="1" step="1" oninput="hitungTanggalItem(${uid})"></div>
+      <div><label>BUD Durasi (jam)</label><input type="number" id="budDurasi_${uid}" value="24" step="0.5"></div>
+    </div>
+    <div class="tanggal-info" id="tanggalInfo_${uid}">📅 Akan dibuat: -</div>
+  </div>`;
+}
+
+function tambahRegimenItem(prefillItem) {
+  itemUid += 1;
+  const uid = itemUid;
+  document.getElementById('regimenContainer').insertAdjacentHTML('beforeend', itemTemplate(uid));
+  const posisi = document.querySelectorAll('.regimen-item').length;
+  document.getElementById('hariKe_' + uid).value = posisi;
+  if (prefillItem) {
+    document.getElementById('obatNama_' + uid).value = prefillItem.obatNama || '';
+    document.getElementById('dosisMg_' + uid).value = prefillItem.dosisMg || '';
+    document.getElementById('obatDosis_' + uid).value = prefillItem.obatDosis || '';
+    document.getElementById('ambil_' + uid).value = prefillItem.ambil || '';
+    document.getElementById('sediaan_' + uid).value = prefillItem.sediaan || '';
+    document.getElementById('namaPelarut_' + uid).value = prefillItem.namaPelarut || '';
+    document.getElementById('volPelarut_' + uid).value = prefillItem.volPelarut || '';
+    document.getElementById('caraPemberian_' + uid).value = prefillItem.caraPemberian || '';
+    document.getElementById('pelarut_' + uid).value = prefillItem.pelarut || '';
+    document.getElementById('hariKe_' + uid).value = prefillItem.hariKe || posisi;
+    document.getElementById('budDurasi_' + uid).value = prefillItem.budDurasi || 24;
+  }
+  renderItemNumbers();
+  hitungTanggalItem(uid);
+}
+
+function hapusRegimenItem(uid) {
+  const items = document.querySelectorAll('.regimen-item');
+  if (items.length <= 1) return;
+  document.getElementById('item_' + uid)?.remove();
+  renderItemNumbers();
+}
+function renderItemNumbers() {
+  document.querySelectorAll('.regimen-item').forEach((el, idx) => {
+    el.querySelector('.item-num').textContent = idx + 1;
+    el.querySelector('.btn.ghost').style.display = document.querySelectorAll('.regimen-item').length > 1 ? 'inline-flex' : 'none';
+  });
+}
+
+function cariObat(nama) {
+  if (!nama) return null;
+  const n = nama.trim().toLowerCase();
+  return CACHE.obat.find(o => o.nama_obat.toLowerCase() === n) || null;
+}
+
+function hitungOtomatis(uid) {
+  const namaInput = document.getElementById('obatNama_' + uid);
+  const dosisInput = document.getElementById('dosisMg_' + uid);
+  const konsentrasiInfo = document.getElementById('konsentrasiInfo_' + uid);
+  const calcBox = document.getElementById('calcBox_' + uid);
+  const obatDosisField = document.getElementById('obatDosis_' + uid);
+  const ambilField = document.getElementById('ambil_' + uid);
+  const obat = cariObat(namaInput.value);
+  const dosis = parseFloat(dosisInput.value);
+
+  if (!obat) { konsentrasiInfo.value = ''; calcBox.classList.add('hidden'); return; }
+  konsentrasiInfo.value = obat.konsentrasi + ' ' + (obat.satuan || 'mg/ml');
+  if (!isNaN(dosis) && obat.konsentrasi) {
+    const vol = dosis / obat.konsentrasi;
+    document.getElementById('calcResult_' + uid).textContent = round2(vol);
+    calcBox.classList.remove('hidden');
+    ambilField.value = round2(vol) + ' mL';
+  }
+  if (!obatDosisField.value || obatDosisField.dataset.auto === '1') {
+    obatDosisField.value = obat.nama_obat + (dosis ? ' Injeksi (' + dosis + ' mg)' : ' Injeksi');
+    obatDosisField.dataset.auto = '1';
+  }
+  hitungTotalVolume(uid);
+}
+
+function composePelarut(uid) {
+  const nama = document.getElementById('namaPelarut_' + uid).value.trim();
+  const vol = document.getElementById('volPelarut_' + uid).value;
+  const cara = document.getElementById('caraPemberian_' + uid).value.trim();
+  const field = document.getElementById('pelarut_' + uid);
+  if (!nama && !vol && !cara) return;
+  let s = nama;
+  const parts = [];
+  if (vol) parts.push(vol + ' mL');
+  if (cara) parts.push(cara);
+  if (parts.length) s += ' (' + parts.join(', ') + ')';
+  field.value = s;
+}
+
+function hitungTotalVolume(uid) {
+  const ambilTxt = document.getElementById('ambil_' + uid).value;
+  const volPelarut = parseFloat(document.getElementById('volPelarut_' + uid).value) || 0;
+  const ambilNum = parseFloat(ambilTxt);
+  const box = document.getElementById('totalBox_' + uid);
+  if (isNaN(ambilNum)) { box.classList.add('hidden'); return; }
+  const total = ambilNum + volPelarut;
+  document.getElementById('totalResult_' + uid).textContent = round2(total);
+  box.classList.remove('hidden');
+}
+
+function round2(n) { return Math.round(n * 100) / 100; }
+
+function hitungTanggalItem(uid) {
+  const base = document.getElementById('f_tanggalMulai').value;
+  const hariKe = parseInt(document.getElementById('hariKe_' + uid).value, 10) || 1;
+  const infoEl = document.getElementById('tanggalInfo_' + uid);
+  if (!infoEl) return;
+  if (!base) { infoEl.textContent = '📅 Isi dulu Tanggal & Jam Kemoterapi (Hari ke-1) di atas.'; return; }
+  const baseDate = new Date(base);
+  baseDate.setDate(baseDate.getDate() + (hariKe - 1));
+  infoEl.textContent = '📅 Akan dibuat: ' + baseDate.toLocaleDateString('id-ID') + ' ' +
+    baseDate.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' (Hari ke-' + hariKe + ')';
+  infoEl.dataset.iso = baseDate.toISOString();
+}
+function updateAllTanggal() {
+  document.querySelectorAll('.regimen-item').forEach(el => hitungTanggalItem(el.getAttribute('data-uid')));
+}
+
+async function simpanEntriBatch() {
+  const msgBox = document.getElementById('entriMsg');
+  msgBox.innerHTML = '';
+  const noRM = document.getElementById('f_noRM').value.trim();
+  const namaPasien = document.getElementById('f_namaPasien').value.trim();
+  const tanggalLahir = document.getElementById('f_tanggalLahir').value || null;
+  const lokasi = document.getElementById('f_lokasi').value.trim();
+  const tanggalMulai = document.getElementById('f_tanggalMulai').value;
+
+  if (!noRM || !namaPasien || !tanggalMulai) {
+    toast(msgBox, 'err', 'No RM, Nama Pasien, dan Tanggal & Jam Kemoterapi wajib diisi.');
+    return;
+  }
+
+  const itemEls = Array.from(document.querySelectorAll('.regimen-item'));
+  const items = [];
+  for (let i = 0; i < itemEls.length; i++) {
+    const uid = itemEls[i].getAttribute('data-uid');
+    const obatDosis = document.getElementById('obatDosis_' + uid).value.trim();
+    const ambil = document.getElementById('ambil_' + uid).value.trim();
+    if (!obatDosis || !ambil) {
+      toast(msgBox, 'err', 'Item Obat #' + (i + 1) + ': Nama Obat & Dosis dan Ambil wajib diisi.');
+      return;
+    }
+    const infoEl = document.getElementById('tanggalInfo_' + uid);
+    items.push({
+      obatNama: document.getElementById('obatNama_' + uid).value.trim(),
+      dosisMg: parseFloat(document.getElementById('dosisMg_' + uid).value) || null,
+      obatDosis,
+      ambil,
+      sediaan: document.getElementById('sediaan_' + uid).value.trim(),
+      namaPelarut: document.getElementById('namaPelarut_' + uid).value.trim(),
+      volPelarut: parseFloat(document.getElementById('volPelarut_' + uid).value) || null,
+      caraPemberian: document.getElementById('caraPemberian_' + uid).value.trim(),
+      pelarut: document.getElementById('pelarut_' + uid).value.trim(),
+      hariKe: parseInt(document.getElementById('hariKe_' + uid).value, 10) || null,
+      budDurasi: parseFloat(document.getElementById('budDurasi_' + uid).value) || 24,
+      tanggalDibuatISO: infoEl?.dataset.iso || isoLocalFromInput(tanggalMulai)
+    });
+  }
+
+  // 1) upsert pasien
+  await supabase.from('pasien').upsert({ no_rm: noRM, nama_pasien: namaPasien, tanggal_lahir: tanggalLahir, updated_at: new Date().toISOString() });
+
+  // 2) simpan tiap item: timpa kalau (no_rm + nama_obat + hari_ke) sudah ada, kalau tidak insert baru
+  const batchId = 'b-' + Date.now();
+  const editId = document.getElementById('regimenContainer').dataset.editId;
+  let overwritten = 0, inserted = 0;
+
+  for (const it of items) {
+    let existing = null;
+    if (editId) {
+      existing = CACHE.etiket.find(e => e.id === editId);
+    } else {
+      existing = CACHE.etiket.find(e =>
+        e.no_rm === noRM &&
+        String(e.hari_ke || '') === String(it.hariKe || '') &&
+        String(e.nama_obat || '').toLowerCase() === String(it.obatNama || '').toLowerCase() &&
+        it.obatNama
+      );
+    }
+    const payload = {
+      nama_pasien: namaPasien, no_rm: noRM, tanggal_lahir: tanggalLahir, lokasi,
+      obat_dosis: it.obatDosis, nama_obat: it.obatNama, dosis_mg: it.dosisMg,
+      hari_ke: it.hariKe, ambil: it.ambil, sediaan: it.sediaan,
+      total_volume_ml: (parseFloat(it.ambil) || 0) + (it.volPelarut || 0) ? String(round2((parseFloat(it.ambil) || 0) + (it.volPelarut || 0))) + ' mL' : null,
+      nama_pelarut: it.namaPelarut, volume_pelarut_ml: it.volPelarut, cara_pemberian: it.caraPemberian,
+      pelarut: it.pelarut, bud_durasi_jam: it.budDurasi,
+      tanggal_dibuat: it.tanggalDibuatISO, batch_id: batchId
+    };
+    if (existing) {
+      payload.id = existing.id;
+      const { error } = await supabase.from('etiket').update(payload).eq('id', existing.id);
+      if (error) { toast(msgBox, 'err', 'Gagal menyimpan: ' + error.message); return; }
+      overwritten++;
+    } else {
+      payload.id = nextEtiketId();
+      const { error } = await supabase.from('etiket').insert(payload);
+      if (error) { toast(msgBox, 'err', 'Gagal menyimpan: ' + error.message); return; }
+      CACHE.etiket.push(payload); // supaya nextEtiketId() berikutnya tidak tabrakan dalam loop yang sama
+      inserted++;
+    }
+  }
+
+  await loadAllData();
+  navigate('dashboard');
+  const dash = document.getElementById('content');
+  toast(dash, 'ok', `Tersimpan. ${inserted} etiket baru, ${overwritten} etiket diperbarui (ditimpa).`);
+}
+
+/* ============================================================
+   HALAMAN: DAFTAR PASIEN
+   ============================================================ */
+function renderPasien(content) {
+  const list = CACHE.pasien.map(p => {
+    const batches = getBatchesForPasien(p.no_rm);
+    return { ...p, jumlahKunjungan: batches.length, terakhir: batches[0] };
+  });
+  content.innerHTML = `
+    <div class="card">
+      <div class="toolbar">
+        <input type="text" id="searchPasien" class="search-box" placeholder="Cari nama / No RM...">
+      </div>
+      <div style="overflow-x:auto;">
+        <table class="data-grid">
+          <thead><tr><th>Nama Pasien</th><th>No RM</th><th>Tgl Lahir</th><th>Kunjungan</th><th>Kunjungan Terakhir</th><th>Regimen Terakhir</th><th></th></tr></thead>
+          <tbody id="pasienTbody">
+            ${list.map(p => `
+              <tr data-search="${escapeHtml((p.nama_pasien+' '+p.no_rm).toLowerCase())}">
+                <td><b>${escapeHtml(p.nama_pasien)}</b></td>
+                <td class="rm-code">${escapeHtml(p.no_rm)}</td>
+                <td>${fmtDate(p.tanggal_lahir)}</td>
+                <td>${p.jumlahKunjungan}</td>
+                <td>${p.terakhir ? fmtDateTime(p.terakhir.tanggal) : '-'}</td>
+                <td>${p.terakhir ? escapeHtml(p.terakhir.ringkasan) : '-'}</td>
+                <td class="actions-cell">
+                  <button class="btn secondary" style="padding:5px 10px;" onclick="gunakanPasien('${escapeHtml(p.no_rm)}')">Gunakan</button>
+                  <button class="icon-btn danger" title="Hapus total" onclick="hapusPasienTotal('${escapeHtml(p.no_rm)}')">🗑️</button>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+  document.getElementById('searchPasien').addEventListener('input', (e) => {
+    const q = e.target.value.toLowerCase().trim();
+    document.querySelectorAll('#pasienTbody tr').forEach(tr => {
+      tr.style.display = tr.getAttribute('data-search').includes(q) ? '' : 'none';
+    });
+  });
+}
+
+function gunakanPasien(noRM) {
+  const p = CACHE.pasien.find(x => x.no_rm === noRM);
+  if (!p) return;
+  const batches = getBatchesForPasien(noRM);
+  const last = batches[0];
+  PREFILL_ENTRI = {
+    noRM: p.no_rm, namaPasien: p.nama_pasien, tanggalLahir: toISODateInput(p.tanggal_lahir),
+    lokasi: last ? last.items[0].lokasi : '',
+    tanggalMulai: defaultTanggalMulai(),
+    items: last ? last.items.map(r => ({
+      obatNama: r.nama_obat, dosisMg: r.dosis_mg, obatDosis: r.obat_dosis,
+      ambil: r.ambil, sediaan: r.sediaan, namaPelarut: r.nama_pelarut,
+      volPelarut: r.volume_pelarut_ml, caraPemberian: r.cara_pemberian,
+      pelarut: r.pelarut, hariKe: r.hari_ke, budDurasi: r.bud_durasi_jam
+    })) : []
+  };
+  navigate('entri');
+}
+
+async function hapusPasienTotal(noRM) {
+  if (!confirm('Hapus pasien ini beserta SEMUA riwayat etiketnya? Tindakan ini tidak bisa dibatalkan.')) return;
+  await supabase.from('etiket').delete().eq('no_rm', noRM);
+  await supabase.from('pasien').delete().eq('no_rm', noRM);
+  await loadAllData();
+  navigate('pasien');
+}
+
+/* ============================================================
+   HALAMAN: DATABASE OBAT
+   ============================================================ */
+function renderObat(content) {
+  content.innerHTML = `
+    <div class="card">
+      <h2>Tambah Obat Baru</h2>
+      <div class="row3">
+        <div><label>Nama Obat</label><input type="text" id="obatNamaBaru" placeholder="Paklitaksel"></div>
+        <div><label>Konsentrasi</label><input type="number" id="obatKonsBaru" step="0.01" placeholder="6"></div>
+        <div><label>Satuan</label><input type="text" id="obatSatuanBaru" value="mg/ml"></div>
+      </div>
+      <button class="btn" style="margin-top:10px;" onclick="tambahObat()">➕ Tambah</button>
+      <div id="obatMsg"></div>
+    </div>
+    <div class="card">
+      <h2>Daftar Obat (${CACHE.obat.length})</h2>
+      <div style="overflow-x:auto;">
+        <table class="data-grid">
+          <thead><tr><th>Nama Obat</th><th>Konsentrasi</th><th>Satuan</th><th></th></tr></thead>
+          <tbody>
+            ${CACHE.obat.map(o => `
+              <tr>
+                <td>${escapeHtml(o.nama_obat)}</td>
+                <td><input type="number" step="0.01" value="${o.konsentrasi ?? ''}" id="k_${o.id}" style="width:100px;"></td>
+                <td><input type="text" value="${escapeHtml(o.satuan || '')}" id="s_${o.id}" style="width:100px;"></td>
+                <td class="actions-cell">
+                  <button class="icon-btn" title="Simpan" onclick="updateObat(${o.id})">💾</button>
+                  <button class="icon-btn danger" title="Hapus" onclick="hapusObat(${o.id})">🗑️</button>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+async function tambahObat() {
+  const nama = document.getElementById('obatNamaBaru').value.trim();
+  const kons = parseFloat(document.getElementById('obatKonsBaru').value);
+  const satuan = document.getElementById('obatSatuanBaru').value.trim() || 'mg/ml';
+  const msgBox = document.getElementById('obatMsg');
+  if (!nama) { toast(msgBox, 'err', 'Nama obat wajib diisi.'); return; }
+  const { error } = await supabase.from('obat').insert({ nama_obat: nama, konsentrasi: isNaN(kons) ? null : kons, satuan });
+  if (error) { toast(msgBox, 'err', 'Gagal: ' + error.message); return; }
+  await loadAllData();
+  navigate('obat');
+}
+async function updateObat(id) {
+  const k = parseFloat(document.getElementById('k_' + id).value);
+  const s = document.getElementById('s_' + id).value.trim();
+  await supabase.from('obat').update({ konsentrasi: isNaN(k) ? null : k, satuan: s }).eq('id', id);
+  await loadAllData();
+  navigate('obat');
+}
+async function hapusObat(id) {
+  if (!confirm('Hapus obat ini dari database?')) return;
+  await supabase.from('obat').delete().eq('id', id);
+  await loadAllData();
+  navigate('obat');
+}
+
+/* ============================================================
+   HALAMAN: PENGATURAN
+   ============================================================ */
+function renderPengaturan(content) {
+  content.innerHTML = `
+    <div class="card" style="max-width:520px;">
+      <h2>Identitas Rumah Sakit</h2>
+      <label>Nama Rumah Sakit</label>
+      <input type="text" id="p_namaRS" value="${escapeHtml(CACHE.settings.nama_rs || '')}">
+      <label>Sub Judul</label>
+      <input type="text" id="p_subJudul" value="${escapeHtml(CACHE.settings.sub_judul || '')}">
+      <button class="btn" style="margin-top:14px;" onclick="simpanPengaturan()">💾 Simpan</button>
+      <div id="pengaturanMsg"></div>
+    </div>
+    <div class="card" style="max-width:520px;">
+      <h2>Akun</h2>
+      <p class="muted" style="font-size:12.5px;">Login sebagai: <b>${escapeHtml(CURRENT_USER ? CURRENT_USER.email : '-')}</b></p>
+      <p class="hint">Untuk menambah/menghapus akun petugas, gunakan Supabase Dashboard &gt; Authentication &gt; Users.</p>
+    </div>
+  `;
+}
+async function simpanPengaturan() {
+  const namaRS = document.getElementById('p_namaRS').value.trim();
+  const subJudul = document.getElementById('p_subJudul').value.trim();
+  const msgBox = document.getElementById('pengaturanMsg');
+  const { error } = await supabase.from('pengaturan').upsert([
+    { key: 'nama_rs', value: namaRS },
+    { key: 'sub_judul', value: subJudul }
+  ]);
+  if (error) { toast(msgBox, 'err', 'Gagal: ' + error.message); return; }
+  await loadAllData();
+  toast(msgBox, 'ok', 'Pengaturan tersimpan.');
+}
+
+/* ---------------- INIT ---------------- */
+checkSession();
+supabase.auth.onAuthStateChange((event) => {
+  if (event === 'SIGNED_OUT') showLogin();
+});

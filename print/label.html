@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<title>Etiket</title>
+<style>
+  @page { size: 60mm 40mm; margin: 0; }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    font-family: Tahoma, Verdana, "Segoe UI", Arial, Helvetica, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .label {
+    width: 60mm; height: 40mm;
+    padding: 1mm 1.3mm 6mm 1.3mm;
+    border-top: 0.5mm solid #000; border-bottom: 0.5mm solid #000;
+    page-break-after: always;
+    display: flex; flex-direction: column; justify-content: flex-start; overflow: hidden;
+  }
+  .label:last-child { page-break-after: auto; }
+  .pasien-block { margin-bottom: 0.4mm; flex-shrink: 0; padding-bottom: 0.4mm; border-bottom: 0.4mm solid #000; }
+  .pasien-row { font-size: 9.5pt; font-weight: 900; line-height: 1.1; color: #000; overflow-wrap: break-word; word-break: break-word; }
+  .obat-box { border-top: 0.5mm solid #000; border-bottom: 0.5mm solid #000; padding: 0.4mm 1mm; margin-bottom: 0.2mm; flex-shrink: 0; position: relative; }
+  .hari-badge { position: absolute; top: -1.9mm; right: -0.8mm; background: #000; color: #fff; font-size: 6.6pt; font-weight: 900; padding: 0.3mm 1.3mm; border-radius: 1mm; }
+  .obat-nama { font-size: 10.5pt; font-weight: 900; line-height: 1.12; color: #000; overflow-wrap: break-word; word-break: break-word; }
+  .ambil-row { display: flex; align-items: baseline; gap: 2mm; margin-top: 0.3mm; padding-top: 0.3mm; border-top: 0.3mm dashed #000; flex-shrink: 0; }
+  .ambil-label { font-size: 7pt; font-weight: 800; color: #000; white-space: nowrap; }
+  .ambil-value { font-size: 11pt; font-weight: 900; color: #000; }
+  .pelarut-row { margin-top: 0.3mm; padding-top: 0.3mm; border-top: 0.3mm dashed #000; flex-shrink: 0; }
+  .pelarut-label { font-size: 7pt; font-weight: 800; color: #000; display: block; }
+  .pelarut-value { font-size: 9pt; font-weight: 900; line-height: 1.1; color: #000; overflow-wrap: break-word; word-break: break-word; }
+  .sediaan-row { font-size: 6pt; font-weight: 700; color: #000; margin-top: 0.2mm; flex-shrink: 0; }
+  .total-row { font-size: 6pt; font-weight: 700; color: #000; margin-top: 0.1mm; flex-shrink: 0; }
+  .total-row b { font-weight: 900; color: #000; }
+  .bud-box { border-top: 0.45mm solid #000; border-bottom: 0.45mm solid #000; padding: 0.25mm 1mm; display: flex; justify-content: space-between; align-items: baseline; gap: 1.5mm; margin-top: 0.2mm; flex-shrink: 0; }
+  .bud-label, .bud-tanggal { font-size: 7pt; font-weight: 900; color: #000; white-space: nowrap; }
+  .footer { font-size: 5.5pt; font-weight: 700; text-align: right; color: #000; margin-top: 0.15mm; flex-shrink: 0; }
+  .print-bar { text-align: center; padding: 10px; font-family: Arial, sans-serif; }
+  .print-bar p { font-size: 11px; color: #666; margin: 6px 0 0; }
+  @media print { .print-bar { display: none; } }
+</style>
+</head>
+<body>
+<div class="print-bar">
+  <button onclick="window.print()">🖨️ Cetak (Ctrl/Cmd+P)</button>
+  <p>Untuk simpan sebagai PDF: pilih <b>Destination → Save as PDF</b>. Ukuran halaman sudah otomatis 60×40mm.</p>
+</div>
+<div id="labelsRoot"><p style="font-family:Arial;padding:20px;">Memuat data...</p></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../js/supabaseClient.js"></script>
+<script>
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function fmtDateTime(d){ if(!d) return ''; const dt=new Date(d); if(isNaN(dt.getTime())) return String(d);
+  return dt.toLocaleDateString('id-ID')+' '+dt.toLocaleTimeString('id-ID',{hour:'2-digit',minute:'2-digit'}); }
+function computeBud(item){
+  if (item.tanggal_bud) return fmtDateTime(item.tanggal_bud);
+  if (item.tanggal_dibuat && item.bud_durasi_jam){
+    const base=new Date(item.tanggal_dibuat);
+    return fmtDateTime(new Date(base.getTime()+parseFloat(item.bud_durasi_jam)*3600000).toISOString());
+  }
+  return '';
+}
+
+(async function(){
+  const { data: sess } = await supabase.auth.getSession();
+  if (!sess || !sess.session) {
+    document.getElementById('labelsRoot').innerHTML = '<p style="font-family:Arial;padding:20px;">Sesi login tidak ditemukan. Buka halaman ini dari dalam aplikasi (setelah login).</p>';
+    return;
+  }
+  const params = new URLSearchParams(location.search);
+  const ids = (params.get('ids') || '').split(',').filter(Boolean);
+  let query = supabase.from('etiket').select('*');
+  query = ids.length ? query.in('id', ids) : query;
+  const { data: rows, error } = await query;
+  if (error) { document.getElementById('labelsRoot').innerHTML = '<p>Gagal memuat data: '+esc(error.message)+'</p>'; return; }
+
+  const { data: settingsRows } = await supabase.from('pengaturan').select('*');
+  const settings = {}; (settingsRows||[]).forEach(r=>settings[r.key]=r.value);
+
+  if (!rows.length) { document.getElementById('labelsRoot').innerHTML = '<p style="font-family:Arial;padding:20px;">Tidak ada data untuk ditampilkan.</p>'; return; }
+
+  document.title = rows.length === 1 ? ('Etiket_' + (rows[0].id||'label')) : ('Etiket_Batch_' + rows.length + 'label');
+
+  document.getElementById('labelsRoot').innerHTML = rows.map(d => `
+    <div class="label">
+      <div class="pasien-block">
+        <div class="pasien-row">${esc(d.nama_pasien)} / ${esc(d.no_rm)} / ${esc(String(d.tanggal_lahir||'').split('T')[0])}</div>
+      </div>
+      <div class="obat-box">
+        ${d.hari_ke ? `<span class="hari-badge">H-${esc(d.hari_ke)}</span>` : ''}
+        <div class="obat-nama">${esc(String(d.obat_dosis||'').replace(/\bInjeksi\b\s*/gi,'').replace(/\s{2,}/g,' ').trim())}</div>
+        <div class="ambil-row"><span class="ambil-label">AMBIL</span><span class="ambil-value">${esc(d.ambil)}</span></div>
+        <div class="pelarut-row"><span class="pelarut-label">PELARUT</span><span class="pelarut-value">${esc(d.pelarut)}</span></div>
+        <div class="sediaan-row">Sediaan: ${esc(d.sediaan)}</div>
+        ${d.total_volume_ml ? `<div class="total-row">Total Volume: <b>${esc(d.total_volume_ml)}</b></div>` : ''}
+      </div>
+      <div class="bud-box">
+        <span class="bud-label">BUD (EXP)${d.bud_durasi_jam ? `: (${esc(d.bud_durasi_jam)}j)` : ''}</span>
+        <span class="bud-tanggal">${esc(computeBud(d))}</span>
+      </div>
+      <div class="footer">ID: ${esc(d.id)}</div>
+    </div>
+  `).join('');
+})();
+</script>
+</body>
+</html>

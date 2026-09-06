@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<title>Label Identitas</title>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; } html, body { margin: 0; padding: 0; }
+  body { font-family: 'Manrope', Arial, sans-serif; color: #1A1E20; background: #EDEFF0; }
+  .screen-toolbar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: #fff; border-bottom: 1px solid #E5E9EA; }
+  .screen-toolbar .info { font-size: 12.5px; color: #667479; flex: 1; }
+  .screen-toolbar button { font-family: inherit; font-size: 13px; font-weight: 700; cursor: pointer; padding: 8px 16px; border-radius: 7px; border: 1px solid #1A1E20; background: #1A1E20; color: #fff; }
+  .sheet { padding: 16px; display: flex; flex-wrap: wrap; gap: 12px; justify-content: flex-start; }
+  .label { width: 60mm; height: 40mm; background: #fff; box-sizing: border-box; padding: 2mm; display: flex; flex-direction: column; border: 1px solid #E5E9EA; border-radius: 3px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+  .data-table { width: 100%; border-collapse: collapse; table-layout: fixed; border-top: 0.35mm solid #1A1E20; border-bottom: 0.35mm solid #1A1E20; }
+  .data-table td { border: none; border-bottom: 0.35mm solid #1A1E20; padding: 0.6mm 1mm; overflow: hidden; vertical-align: middle; }
+  .data-table tr:last-child td { border-bottom: none; }
+  .data-table td.lbl { width: 16mm; font-size: 7pt; font-weight: 800; letter-spacing: 0.02em; white-space: nowrap; padding-right: 0.4mm; }
+  .data-table td.val { font-size: 9.6pt; font-weight: 700; overflow-wrap: anywhere; padding-left: 0.4mm; }
+  .data-table tr.nama td.val { font-size: 12pt; font-weight: 800; }
+  .data-table tr.rm td.val { font-size: 11pt; font-weight: 800; letter-spacing: 0.02em; }
+  .hari-ke { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  .hari-ke .lbl { font-size: 7.5pt; font-weight: 800; letter-spacing: 0.04em; color: #4A4F52; }
+  .hari-ke .val { font-size: 22pt; font-weight: 800; line-height: 1.1; }
+  .empty-note { padding: 24px; font-size: 13px; color: #667479; }
+  @media print {
+    body { background: #fff; } .screen-toolbar { display: none; } .sheet { padding: 0; gap: 0; display: block; }
+    .label { border: none; border-radius: 0; box-shadow: none; page-break-after: always; width: 60mm; height: 40mm; }
+    .label:last-child { page-break-after: auto; }
+    @page { size: 60mm 50mm; margin: 0mm 0mm 10mm 0mm; }
+  }
+</style>
+</head>
+<body>
+<div class="screen-toolbar">
+  <span class="info" id="infoText">🏷️ Label Identitas — memuat... · Set ukuran kertas printer ke 60mm x 50mm (margin atas 0mm, bawah 10mm), margin printer di driver = 0/None.</span>
+  <button onclick="window.print()">🖨️ Cetak</button>
+</div>
+<div class="sheet" id="sheetRoot"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../js/supabaseClient.js"></script>
+<script>
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function dateKey(d){ if(!d) return ''; const dt=new Date(d); return isNaN(dt.getTime())?'':dt.toISOString().slice(0,10); }
+function fmtDate(d){ if(!d) return ''; const dt=new Date(d); return isNaN(dt.getTime())?String(d):dt.toLocaleDateString('id-ID'); }
+
+(async function(){
+  const { data: sess } = await supabase.auth.getSession();
+  if (!sess || !sess.session) {
+    document.getElementById('sheetRoot').innerHTML = '<div class="empty-note">Sesi login tidak ditemukan. Buka halaman ini dari dalam aplikasi (setelah login).</div>';
+    return;
+  }
+  const params = new URLSearchParams(location.search);
+  const ids = (params.get('ids') || '').split(',').filter(Boolean);
+  let query = supabase.from('etiket').select('*');
+  query = ids.length ? query.in('id', ids) : query;
+  const { data: rows, error } = await query;
+  if (error) { document.getElementById('sheetRoot').innerHTML = '<div class="empty-note">Gagal memuat data: '+esc(error.message)+'</div>'; return; }
+
+  // Dedup: 1 label per No RM + Hari Ke + tanggal (tanpa memandang obat)
+  const seen = {};
+  const labels = [];
+  rows.forEach(item => {
+    const tglKey = dateKey(item.tanggal_dibuat);
+    const key = (item.no_rm || item.nama_pasien || '') + '|' + (item.hari_ke || '') + '|' + tglKey;
+    if (seen[key]) return;
+    seen[key] = true;
+    labels.push(item);
+  });
+
+  document.title = labels.length === 1 ? ('LabelIdentitas_' + (labels[0].no_rm||'label')) : ('LabelIdentitas_Batch_' + labels.length + 'label');
+  document.getElementById('infoText').textContent = `🏷️ Label Identitas — ${labels.length} label · 1 label per pasien per hari kemoterapi. Set ukuran kertas printer ke 60mm x 50mm (margin atas 0mm, bawah 10mm), margin printer di driver = 0/None.`;
+
+  if (!labels.length) { document.getElementById('sheetRoot').innerHTML = '<div class="empty-note">Tidak ada data untuk dicetak.</div>'; return; }
+
+  document.getElementById('sheetRoot').innerHTML = labels.map(l => `
+    <div class="label">
+      <table class="data-table">
+        <tr><td class="lbl">TGL BUAT</td><td class="val">: ${esc(fmtDate(l.tanggal_dibuat))}</td></tr>
+        <tr class="nama"><td class="lbl">NAMA</td><td class="val">: ${esc(l.nama_pasien)}</td></tr>
+        <tr class="rm"><td class="lbl">NO. RM</td><td class="val">: ${esc(l.no_rm)}</td></tr>
+        ${l.tanggal_lahir ? `<tr><td class="lbl">TGL LAHIR</td><td class="val">: ${esc(fmtDate(l.tanggal_lahir))}</td></tr>` : ''}
+      </table>
+      <div class="hari-ke"><span class="lbl">HARI KE</span><span class="val">${esc(l.hari_ke)}</span></div>
+    </div>
+  `).join('');
+})();
+</script>
+</body>
+</html>
