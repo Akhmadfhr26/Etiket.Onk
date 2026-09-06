@@ -7,16 +7,7 @@ let CACHE = { etiket: [], pasien: [], obat: [], settings: {} };
 let CURRENT_ROUTE = 'dashboard';
 let PREFILL_ENTRI = null; // dipakai saat "Gunakan" dari Daftar Pasien
 
-/* ---------------- THEME ---------------- */
-function setTheme(mode) {
-  document.body.setAttribute('data-theme', mode);
-  localStorage.setItem('etiket_theme', mode);
-  document.getElementById('btnThemeModern').classList.toggle('active', mode === 'modern');
-  document.getElementById('btnThemeClassic').classList.toggle('active', mode === 'classic');
-}
-(function initTheme() {
-  setTheme(localStorage.getItem('etiket_theme') || 'modern');
-})();
+/* ---------------- SIDEBAR ---------------- */
 
 function toggleSidebar() {
   document.getElementById('sidebar').classList.toggle('collapsed');
