@@ -3,7 +3,7 @@
    ============================================================ */
 
 let CURRENT_USER = null;
-let CACHE = { etiket: [], pasien: [], obat: [], settings: {} };
+let CACHE = { etiket: [], pasien: [], obat: [], pelarut: [], settings: {} };
 let CURRENT_ROUTE = 'dashboard';
 let PREFILL_ENTRI = null; // dipakai saat "Gunakan" dari Daftar Pasien
 
@@ -63,15 +63,17 @@ async function doLogout() {
 
 /* ---------------- DATA LOADING ---------------- */
 async function loadAllData() {
-  const [etiketRes, pasienRes, obatRes, settingsRes] = await Promise.all([
+  const [etiketRes, pasienRes, obatRes, pelarutRes, settingsRes] = await Promise.all([
     supabase.from('etiket').select('*').order('created_at', { ascending: false }),
     supabase.from('pasien').select('*').order('nama_pasien', { ascending: true }),
     supabase.from('obat').select('*').order('nama_obat', { ascending: true }),
+    supabase.from('pelarut').select('*').order('nama_pelarut', { ascending: true }),
     supabase.from('pengaturan').select('*')
   ]);
   CACHE.etiket = etiketRes.data || [];
   CACHE.pasien = pasienRes.data || [];
   CACHE.obat = obatRes.data || [];
+  CACHE.pelarut = pelarutRes.data || [];
   CACHE.settings = {};
   (settingsRes.data || []).forEach(r => CACHE.settings[r.key] = r.value);
   document.getElementById('sbNamaRS').textContent = CACHE.settings.nama_rs || 'Etiket Kemo';
@@ -83,6 +85,7 @@ const PAGES = {
   entri:      { title: 'Entri Data Baru',  sub: 'Tambah atau perbarui etiket pasien',        render: renderEntri },
   pasien:     { title: 'Daftar Pasien',    sub: 'Riwayat kunjungan tiap pasien',             render: renderPasien },
   obat:       { title: 'Database Obat',    sub: 'Nama obat & konsentrasi untuk kalkulasi',   render: renderObat },
+  pelarut:    { title: 'Database Pelarut', sub: 'Daftar pelarut baku (NaCl 0,9%, D5%, dll)', render: renderPelarut },
   pengaturan: { title: 'Pengaturan',       sub: 'Identitas rumah sakit',                     render: renderPengaturan }
 };
 
@@ -340,6 +343,7 @@ function renderEntri(content) {
       <button class="btn ghost" onclick="navigate('dashboard')">Batal</button>
     </div>
     <datalist id="daftarObatList">${CACHE.obat.map(o => `<option value="${escapeHtml(o.nama_obat)}">`).join('')}</datalist>
+    <datalist id="daftarPelarutList">${CACHE.pelarut.map(p => `<option value="${escapeHtml(p.nama_pelarut)}">`).join('')}</datalist>
   `;
 
   if (prefill) {
@@ -439,8 +443,8 @@ function itemTemplate(uid) {
       <div><label>Sediaan</label><input type="text" id="sediaan_${uid}" placeholder="4 mg / 2 mL"></div>
     </div>
     <div class="subsection-divider">Pelarut</div>
-    <label>Nama Pelarut</label>
-    <input type="text" id="namaPelarut_${uid}" placeholder="NaCl 0.9%" oninput="composePelarut(${uid})">
+    <label>Nama Pelarut (ketik untuk cari) *</label>
+    <input type="text" id="namaPelarut_${uid}" list="daftarPelarutList" placeholder="Ketik atau pilih pelarut..." oninput="composePelarut(${uid})">
     <div class="row2">
       <div><label>Volume Pelarut (mL)</label><input type="number" id="volPelarut_${uid}" step="0.01" oninput="composePelarut(${uid}); hitungTotalVolume(${uid})"></div>
       <div><label>Cara Pemberian</label><input type="text" id="caraPemberian_${uid}" placeholder="Bolus Pelan" oninput="composePelarut(${uid})"></div>
@@ -461,8 +465,18 @@ function tambahRegimenItem(prefillItem) {
   itemUid += 1;
   const uid = itemUid;
   document.getElementById('regimenContainer').insertAdjacentHTML('beforeend', itemTemplate(uid));
-  const posisi = document.querySelectorAll('.regimen-item').length;
-  document.getElementById('hariKe_' + uid).value = posisi;
+
+  // Hari Ke- default: ikuti hari ke item sebelumnya (bukan urutan penambahan).
+  // Kalau ini item pertama, defaultnya hari ke-1.
+  const items = document.querySelectorAll('.regimen-item');
+  let defaultHariKe = 1;
+  if (items.length > 1) {
+    const prevUid = items[items.length - 2].getAttribute('data-uid');
+    const prevVal = parseInt(document.getElementById('hariKe_' + prevUid)?.value, 10);
+    defaultHariKe = isNaN(prevVal) ? 1 : prevVal;
+  }
+  document.getElementById('hariKe_' + uid).value = defaultHariKe;
+
   if (prefillItem) {
     document.getElementById('obatNama_' + uid).value = prefillItem.obatNama || '';
     document.getElementById('dosisMg_' + uid).value = prefillItem.dosisMg || '';
@@ -473,7 +487,7 @@ function tambahRegimenItem(prefillItem) {
     document.getElementById('volPelarut_' + uid).value = prefillItem.volPelarut || '';
     document.getElementById('caraPemberian_' + uid).value = prefillItem.caraPemberian || '';
     document.getElementById('pelarut_' + uid).value = prefillItem.pelarut || '';
-    document.getElementById('hariKe_' + uid).value = prefillItem.hariKe || posisi;
+    document.getElementById('hariKe_' + uid).value = prefillItem.hariKe || defaultHariKe;
     document.getElementById('budDurasi_' + uid).value = prefillItem.budDurasi || 24;
   }
   renderItemNumbers();
@@ -497,6 +511,12 @@ function cariObat(nama) {
   if (!nama) return null;
   const n = nama.trim().toLowerCase();
   return CACHE.obat.find(o => o.nama_obat.toLowerCase() === n) || null;
+}
+
+function cariPelarut(nama) {
+  if (!nama) return null;
+  const n = nama.trim().toLowerCase();
+  return CACHE.pelarut.find(p => p.nama_pelarut.toLowerCase() === n) || null;
 }
 
 function hitungOtomatis(uid) {
@@ -790,6 +810,67 @@ async function hapusObat(id) {
   await supabase.from('obat').delete().eq('id', id);
   await loadAllData();
   navigate('obat');
+}
+
+/* ============================================================
+   HALAMAN: DATABASE PELARUT
+   ============================================================ */
+function renderPelarut(content) {
+  content.innerHTML = `
+    <div class="card">
+      <h2>Tambah Pelarut Baru</h2>
+      <div class="row2">
+        <div><label>Nama Pelarut</label><input type="text" id="pelarutNamaBaru" placeholder="NaCl 0,9%"></div>
+        <div><label>Keterangan (opsional)</label><input type="text" id="pelarutKetBaru" placeholder="Normal Saline"></div>
+      </div>
+      <button class="btn" style="margin-top:10px;" onclick="tambahPelarut()">➕ Tambah</button>
+      <div id="pelarutMsg"></div>
+    </div>
+    <div class="card">
+      <h2>Daftar Pelarut (${CACHE.pelarut.length})</h2>
+      <div style="overflow-x:auto;">
+        <table class="data-grid">
+          <thead><tr><th>Nama Pelarut</th><th>Keterangan</th><th></th></tr></thead>
+          <tbody>
+            ${CACHE.pelarut.map(p => `
+              <tr>
+                <td><input type="text" value="${escapeHtml(p.nama_pelarut)}" id="np_${p.id}" style="min-width:160px;"></td>
+                <td><input type="text" value="${escapeHtml(p.keterangan || '')}" id="kp_${p.id}"></td>
+                <td class="actions-cell">
+                  <button class="icon-btn" title="Simpan" onclick="updatePelarut(${p.id})">💾</button>
+                  <button class="icon-btn danger" title="Hapus" onclick="hapusPelarut(${p.id})">🗑️</button>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+async function tambahPelarut() {
+  const nama = document.getElementById('pelarutNamaBaru').value.trim();
+  const ket = document.getElementById('pelarutKetBaru').value.trim();
+  const msgBox = document.getElementById('pelarutMsg');
+  if (!nama) { toast(msgBox, 'err', 'Nama pelarut wajib diisi.'); return; }
+  const { error } = await supabase.from('pelarut').insert({ nama_pelarut: nama, keterangan: ket || null });
+  if (error) { toast(msgBox, 'err', 'Gagal: ' + error.message); return; }
+  await loadAllData();
+  navigate('pelarut');
+}
+async function updatePelarut(id) {
+  const nama = document.getElementById('np_' + id).value.trim();
+  const ket = document.getElementById('kp_' + id).value.trim();
+  await supabase.from('pelarut').update({ nama_pelarut: nama, keterangan: ket || null }).eq('id', id);
+  await loadAllData();
+  navigate('pelarut');
+}
+async function hapusPelarut(id) {
+  if (!confirm('Hapus pelarut ini dari database?')) return;
+  await supabase.from('pelarut').delete().eq('id', id);
+  await loadAllData();
+  navigate('pelarut');
 }
 
 /* ============================================================
