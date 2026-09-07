@@ -12,14 +12,24 @@
     -webkit-font-smoothing: antialiased;
     -webkit-print-color-adjust: exact; print-color-adjust: exact;
   }
+
+  /* .label sekarang murni "bingkai" fisik 60x40mm: overflow:hidden + position:relative
+     supaya wrapper .fit-content di dalamnya bisa di-scale JS tanpa pernah meluber/terpotong. */
   .label {
     width: 60mm; height: 40mm;
     padding: 1mm 1.3mm 6mm 1.3mm;
     border-top: 0.5mm solid #000; border-bottom: 0.5mm solid #000;
     page-break-after: always;
-    display: flex; flex-direction: column; justify-content: flex-start; overflow: hidden;
+    overflow: hidden;
+    position: relative;
   }
   .label:last-child { page-break-after: auto; }
+
+  /* Semua konten label asli dipindah ke sini. Layout flex-column yang dulu ada di .label
+     kini ada di wrapper ini, sehingga JS bisa mengecilkan (transform: scale) seluruh
+     wrapper sekaligus bila kontennya lebih panjang dari tinggi label. */
+  .fit-content { display: flex; flex-direction: column; justify-content: flex-start; width: 100%; transform-origin: top left; }
+
   .pasien-block { margin-bottom: 0.4mm; flex-shrink: 0; padding-bottom: 0.4mm; border-bottom: 0.4mm solid #000; }
   .pasien-row { font-size: 9.5pt; font-weight: 900; line-height: 1.1; color: #000; overflow-wrap: break-word; word-break: break-word; }
   .obat-box { border-top: 0.5mm solid #000; border-bottom: 0.5mm solid #000; padding: 0.4mm 1mm; margin-bottom: 0.2mm; flex-shrink: 0; position: relative; }
@@ -64,6 +74,32 @@ function computeBud(item){
   return '';
 }
 
+// Mengecilkan (scale) konten sebuah label bila kontennya lebih panjang dari tinggi
+// fisik label (40mm), sehingga tidak ada baris yang terpotong saat dicetak.
+// minScale membatasi seberapa kecil boleh mengecil agar teks tetap terbaca.
+function autofitLabels(minScale){
+  minScale = minScale || 0.55;
+  document.querySelectorAll('.label').forEach(label => {
+    const content = label.querySelector('.fit-content');
+    if (!content) return;
+    content.style.transform = 'none';
+    content.style.width = '100%';
+    void content.offsetHeight; // paksa reflow sebelum diukur
+    const cs = getComputedStyle(label);
+    const availH = label.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+    const availW = label.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    const contentH = content.scrollHeight;
+    const contentW = content.scrollWidth;
+    let scale = Math.min(availH / contentH, availW / contentW, 1);
+    if (!isFinite(scale) || scale <= 0) scale = 1;
+    if (scale < minScale) scale = minScale;
+    if (scale < 1) {
+      content.style.width = (100 / scale) + '%';
+      content.style.transform = `scale(${scale})`;
+    }
+  });
+}
+
 (async function(){
   const { data: sess } = await supabase.auth.getSession();
   if (!sess || !sess.session) {
@@ -86,24 +122,33 @@ function computeBud(item){
 
   document.getElementById('labelsRoot').innerHTML = rows.map(d => `
     <div class="label">
-      <div class="pasien-block">
-        <div class="pasien-row">${esc(d.nama_pasien)} / ${esc(d.no_rm)} / ${esc(String(d.tanggal_lahir||'').split('T')[0])}</div>
+      <div class="fit-content">
+        <div class="pasien-block">
+          <div class="pasien-row">${esc(d.nama_pasien)} / ${esc(d.no_rm)} / ${esc(String(d.tanggal_lahir||'').split('T')[0])}</div>
+        </div>
+        <div class="obat-box">
+          ${d.hari_ke ? `<span class="hari-badge">H-${esc(d.hari_ke)}</span>` : ''}
+          <div class="obat-nama">${esc(String(d.obat_dosis||'').replace(/\bInjeksi\b\s*/gi,'').replace(/\s{2,}/g,' ').trim())}</div>
+          <div class="ambil-row"><span class="ambil-label">AMBIL</span><span class="ambil-value">${esc(d.ambil)}</span></div>
+          <div class="pelarut-row"><span class="pelarut-label">PELARUT</span><span class="pelarut-value">${esc(d.pelarut)}</span></div>
+          <div class="sediaan-row">Sediaan: ${esc(d.sediaan)}</div>
+          ${d.total_volume_ml ? `<div class="total-row">Total Volume: <b>${esc(d.total_volume_ml)}</b></div>` : ''}
+        </div>
+        <div class="bud-box">
+          <span class="bud-label">BUD (EXP)${d.bud_durasi_jam ? `: (${esc(d.bud_durasi_jam)}j)` : ''}</span>
+          <span class="bud-tanggal">${esc(computeBud(d))}</span>
+        </div>
+        <div class="footer">ID: ${esc(d.id)}</div>
       </div>
-      <div class="obat-box">
-        ${d.hari_ke ? `<span class="hari-badge">H-${esc(d.hari_ke)}</span>` : ''}
-        <div class="obat-nama">${esc(String(d.obat_dosis||'').replace(/\bInjeksi\b\s*/gi,'').replace(/\s{2,}/g,' ').trim())}</div>
-        <div class="ambil-row"><span class="ambil-label">AMBIL</span><span class="ambil-value">${esc(d.ambil)}</span></div>
-        <div class="pelarut-row"><span class="pelarut-label">PELARUT</span><span class="pelarut-value">${esc(d.pelarut)}</span></div>
-        <div class="sediaan-row">Sediaan: ${esc(d.sediaan)}</div>
-        ${d.total_volume_ml ? `<div class="total-row">Total Volume: <b>${esc(d.total_volume_ml)}</b></div>` : ''}
-      </div>
-      <div class="bud-box">
-        <span class="bud-label">BUD (EXP)${d.bud_durasi_jam ? `: (${esc(d.bud_durasi_jam)}j)` : ''}</span>
-        <span class="bud-tanggal">${esc(computeBud(d))}</span>
-      </div>
-      <div class="footer">ID: ${esc(d.id)}</div>
     </div>
   `).join('');
+
+  autofitLabels();
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(() => requestAnimationFrame(() => autofitLabels()));
+  }
+  window.addEventListener('resize', () => autofitLabels());
+  window.addEventListener('beforeprint', () => autofitLabels());
 })();
 </script>
 </body>
