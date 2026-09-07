@@ -272,6 +272,26 @@ async function hapusSatuEtiket(id) {
   navigate('dashboard');
 }
 
+// Pecah satu baris etiket (yang mungkin berisi >1 obat digabung dalam 1 pelarut)
+// menjadi array item regimen untuk ditampilkan/diedit di form Entri.
+function expandEtiketRowToItems(row) {
+  if (Array.isArray(row.detail_obat) && row.detail_obat.length > 1) {
+    return row.detail_obat.map((d, idx) => ({
+      obatNama: d.obatNama, dosisMg: d.dosisMg, obatDosis: d.obatDosis,
+      ambil: d.ambil, sediaan: d.sediaan,
+      namaPelarut: row.nama_pelarut, volPelarut: row.volume_pelarut_ml, caraPemberian: row.cara_pemberian,
+      pelarut: row.pelarut, hariKe: row.hari_ke, budDurasi: row.bud_durasi_jam,
+      merge: idx > 0
+    }));
+  }
+  return [{
+    obatNama: row.nama_obat, dosisMg: row.dosis_mg, obatDosis: row.obat_dosis,
+    ambil: row.ambil, sediaan: row.sediaan,
+    namaPelarut: row.nama_pelarut, volPelarut: row.volume_pelarut_ml, caraPemberian: row.cara_pemberian,
+    pelarut: row.pelarut, hariKe: row.hari_ke, budDurasi: row.bud_durasi_jam
+  }];
+}
+
 function editEtiket(id) {
   const row = CACHE.etiket.find(r => r.id === id);
   if (!row) return;
@@ -280,12 +300,7 @@ function editEtiket(id) {
     namaPasien: row.nama_pasien, noRM: row.no_rm, tanggalLahir: toISODateInput(row.tanggal_lahir),
     lokasi: row.lokasi,
     tanggalMulai: row.tanggal_dibuat ? new Date(row.tanggal_dibuat).toISOString().slice(0,16) : '',
-    items: [{
-      obatNama: row.nama_obat, dosisMg: row.dosis_mg, obatDosis: row.obat_dosis,
-      ambil: row.ambil, sediaan: row.sediaan,
-      namaPelarut: row.nama_pelarut, volPelarut: row.volume_pelarut_ml, caraPemberian: row.cara_pemberian,
-      pelarut: row.pelarut, hariKe: row.hari_ke, budDurasi: row.bud_durasi_jam
-    }]
+    items: expandEtiketRowToItems(row)
   };
   navigate('entri');
 }
@@ -414,12 +429,9 @@ function terapkanRiwayat(idx) {
   const batch = getBatchesForPasien(noRM)[parseInt(idx, 10)];
   if (!batch) return;
   document.getElementById('regimenContainer').innerHTML = '';
-  batch.items.forEach(r => tambahRegimenItem({
-    obatNama: r.nama_obat, dosisMg: r.dosis_mg, obatDosis: r.obat_dosis,
-    ambil: r.ambil, sediaan: r.sediaan, namaPelarut: r.nama_pelarut,
-    volPelarut: r.volume_pelarut_ml, caraPemberian: r.cara_pemberian,
-    pelarut: r.pelarut, hariKe: r.hari_ke, budDurasi: r.bud_durasi_jam
-  }));
+  batch.items.forEach(r => {
+    expandEtiketRowToItems(r).forEach(it => tambahRegimenItem(it));
+  });
 }
 
 function itemTemplate(uid) {
@@ -428,6 +440,13 @@ function itemTemplate(uid) {
     <div class="item-head">
       <span class="item-title"><span class="item-badge item-num"></span>Obat</span>
       <button type="button" class="btn ghost" style="padding:4px 10px;" onclick="hapusRegimenItem(${uid})">🗑 Hapus</button>
+    </div>
+    <div class="merge-row hidden" id="mergeRow_${uid}">
+      <label class="checkbox-inline">
+        <input type="checkbox" id="merge_${uid}" onchange="toggleMerge(${uid})">
+        🔗 Gabungkan dengan obat di atas dalam 1 etiket (pakai 1 pelarut &amp; jadwal yang sama)
+      </label>
+      <div class="hint hidden" id="mergeHint_${uid}">Pelarut &amp; jadwal etiket ini memakai punya obat sebelumnya.</div>
     </div>
     <label>Nama Obat (ketik untuk cari) *</label>
     <input type="text" id="obatNama_${uid}" list="daftarObatList" placeholder="Ketik nama obat..." oninput="hitungOtomatis(${uid})">
@@ -442,23 +461,35 @@ function itemTemplate(uid) {
       <div><label>Ambil (Volume Diambil) *</label><input type="text" id="ambil_${uid}" placeholder="1.5 mL" oninput="hitungTotalVolume(${uid})"></div>
       <div><label>Sediaan</label><input type="text" id="sediaan_${uid}" placeholder="4 mg / 2 mL"></div>
     </div>
-    <div class="subsection-divider">Pelarut</div>
-    <label>Nama Pelarut (ketik untuk cari) *</label>
-    <input type="text" id="namaPelarut_${uid}" list="daftarPelarutList" placeholder="Ketik atau pilih pelarut..." oninput="composePelarut(${uid})">
-    <div class="row2">
-      <div><label>Volume Pelarut (mL)</label><input type="number" id="volPelarut_${uid}" step="0.01" oninput="composePelarut(${uid}); hitungTotalVolume(${uid})"></div>
-      <div><label>Cara Pemberian</label><input type="text" id="caraPemberian_${uid}" placeholder="Bolus Pelan" oninput="composePelarut(${uid})"></div>
+    <div id="pelarutSection_${uid}">
+      <div class="subsection-divider">Pelarut</div>
+      <label>Nama Pelarut (ketik untuk cari) *</label>
+      <input type="text" id="namaPelarut_${uid}" list="daftarPelarutList" placeholder="Ketik atau pilih pelarut..." oninput="composePelarut(${uid})">
+      <div class="row2">
+        <div><label>Volume Pelarut (mL)</label><input type="number" id="volPelarut_${uid}" step="0.01" oninput="composePelarut(${uid}); hitungTotalVolume(${uid})"></div>
+        <div><label>Cara Pemberian</label><input type="text" id="caraPemberian_${uid}" placeholder="Bolus Pelan" oninput="composePelarut(${uid})"></div>
+      </div>
+      <label>Pelarut (tampil di etiket)</label>
+      <input type="text" id="pelarut_${uid}" placeholder="Terisi otomatis dari field di atas">
+      <div class="calc-box hidden" id="totalBox_${uid}">Total Volume: <b id="totalResult_${uid}">-</b> mL</div>
     </div>
-    <label>Pelarut (tampil di etiket)</label>
-    <input type="text" id="pelarut_${uid}" placeholder="Terisi otomatis dari field di atas">
-    <div class="calc-box hidden" id="totalBox_${uid}">Total Volume: <b id="totalResult_${uid}">-</b> mL</div>
-    <div class="subsection-divider">Jadwal item ini</div>
-    <div class="row2">
-      <div><label>Hari Ke-</label><input type="number" id="hariKe_${uid}" min="1" step="1" oninput="hitungTanggalItem(${uid})"></div>
-      <div><label>BUD Durasi (jam)</label><input type="number" id="budDurasi_${uid}" value="24" step="0.5"></div>
+    <div id="jadwalSection_${uid}">
+      <div class="subsection-divider">Jadwal item ini</div>
+      <div class="row2">
+        <div><label>Hari Ke-</label><input type="number" id="hariKe_${uid}" min="1" step="1" oninput="hitungTanggalItem(${uid})"></div>
+        <div><label>BUD Durasi (jam)</label><input type="number" id="budDurasi_${uid}" value="24" step="0.5"></div>
+      </div>
+      <div class="tanggal-info" id="tanggalInfo_${uid}">📅 Akan dibuat: -</div>
     </div>
-    <div class="tanggal-info" id="tanggalInfo_${uid}">📅 Akan dibuat: -</div>
   </div>`;
+}
+
+function toggleMerge(uid) {
+  const cb = document.getElementById('merge_' + uid);
+  const checked = !!(cb && cb.checked);
+  document.getElementById('pelarutSection_' + uid)?.classList.toggle('hidden', checked);
+  document.getElementById('jadwalSection_' + uid)?.classList.toggle('hidden', checked);
+  document.getElementById('mergeHint_' + uid)?.classList.toggle('hidden', !checked);
 }
 
 function tambahRegimenItem(prefillItem) {
@@ -489,8 +520,13 @@ function tambahRegimenItem(prefillItem) {
     document.getElementById('pelarut_' + uid).value = prefillItem.pelarut || '';
     document.getElementById('hariKe_' + uid).value = prefillItem.hariKe || defaultHariKe;
     document.getElementById('budDurasi_' + uid).value = prefillItem.budDurasi || 24;
+    if (prefillItem.merge) {
+      const cb = document.getElementById('merge_' + uid);
+      if (cb) cb.checked = true;
+    }
   }
   renderItemNumbers();
+  if (prefillItem && prefillItem.merge) toggleMerge(uid);
   hitungTanggalItem(uid);
 }
 
@@ -501,9 +537,21 @@ function hapusRegimenItem(uid) {
   renderItemNumbers();
 }
 function renderItemNumbers() {
-  document.querySelectorAll('.regimen-item').forEach((el, idx) => {
+  const allItems = document.querySelectorAll('.regimen-item');
+  allItems.forEach((el, idx) => {
     el.querySelector('.item-num').textContent = idx + 1;
-    el.querySelector('.btn.ghost').style.display = document.querySelectorAll('.regimen-item').length > 1 ? 'inline-flex' : 'none';
+    el.querySelector('.btn.ghost').style.display = allItems.length > 1 ? 'inline-flex' : 'none';
+    const uid = el.getAttribute('data-uid');
+    const mergeRow = document.getElementById('mergeRow_' + uid);
+    if (!mergeRow) return;
+    if (idx === 0) {
+      // Obat pertama tidak bisa digabung (tidak ada obat sebelumnya)
+      mergeRow.classList.add('hidden');
+      const cb = document.getElementById('merge_' + uid);
+      if (cb && cb.checked) { cb.checked = false; toggleMerge(uid); }
+    } else {
+      mergeRow.classList.remove('hidden');
+    }
   });
 }
 
@@ -602,7 +650,7 @@ async function simpanEntriBatch() {
   }
 
   const itemEls = Array.from(document.querySelectorAll('.regimen-item'));
-  const items = [];
+  const rawItems = [];
   for (let i = 0; i < itemEls.length; i++) {
     const uid = itemEls[i].getAttribute('data-uid');
     const obatDosis = document.getElementById('obatDosis_' + uid).value.trim();
@@ -612,7 +660,9 @@ async function simpanEntriBatch() {
       return;
     }
     const infoEl = document.getElementById('tanggalInfo_' + uid);
-    items.push({
+    const merge = i > 0 && !!document.getElementById('merge_' + uid)?.checked;
+    rawItems.push({
+      merge,
       obatNama: document.getElementById('obatNama_' + uid).value.trim(),
       dosisMg: parseFloat(document.getElementById('dosisMg_' + uid).value) || null,
       obatDosis,
@@ -627,6 +677,47 @@ async function simpanEntriBatch() {
       tanggalDibuatISO: infoEl?.dataset.iso || isoLocalFromInput(tanggalMulai)
     });
   }
+
+  // Kelompokkan item yang dicentang "gabung" ke dalam item sebelumnya (leader).
+  // Satu kelompok = satu etiket, memakai pelarut & jadwal dari item leader (yang tidak digabung).
+  const groups = [];
+  for (const it of rawItems) {
+    if (!it.merge || !groups.length) {
+      groups.push([it]);
+    } else {
+      groups[groups.length - 1].push(it);
+    }
+  }
+
+  const items = groups.map(members => {
+    const leader = members[0];
+    if (members.length === 1) {
+      return {
+        obatNama: leader.obatNama, dosisMg: leader.dosisMg, obatDosis: leader.obatDosis,
+        ambil: leader.ambil, sediaan: leader.sediaan,
+        namaPelarut: leader.namaPelarut, volPelarut: leader.volPelarut, caraPemberian: leader.caraPemberian,
+        pelarut: leader.pelarut, hariKe: leader.hariKe, budDurasi: leader.budDurasi,
+        tanggalDibuatISO: leader.tanggalDibuatISO,
+        totalVolumeMl: (parseFloat(leader.ambil) || 0) + (leader.volPelarut || 0),
+        detailObat: null
+      };
+    }
+    const totalAmbilNum = members.reduce((sum, m) => sum + (parseFloat(m.ambil) || 0), 0);
+    return {
+      obatNama: members.map(m => m.obatNama).filter(Boolean).join(', '),
+      dosisMg: null, // dosis campuran, lihat detail_obat untuk rincian per obat
+      obatDosis: members.map(m => m.obatDosis).filter(Boolean).join(' + '),
+      ambil: members.map(m => m.ambil).filter(Boolean).join(' + '),
+      sediaan: members.map(m => m.sediaan).filter(Boolean).join(' ; '),
+      namaPelarut: leader.namaPelarut, volPelarut: leader.volPelarut, caraPemberian: leader.caraPemberian,
+      pelarut: leader.pelarut, hariKe: leader.hariKe, budDurasi: leader.budDurasi,
+      tanggalDibuatISO: leader.tanggalDibuatISO,
+      totalVolumeMl: totalAmbilNum + (leader.volPelarut || 0),
+      detailObat: members.map(m => ({
+        obatNama: m.obatNama, dosisMg: m.dosisMg, obatDosis: m.obatDosis, ambil: m.ambil, sediaan: m.sediaan
+      }))
+    };
+  });
 
   // 1) upsert pasien
   await supabase.from('pasien').upsert({ no_rm: noRM, nama_pasien: namaPasien, tanggal_lahir: tanggalLahir, updated_at: new Date().toISOString() });
@@ -652,10 +743,11 @@ async function simpanEntriBatch() {
       nama_pasien: namaPasien, no_rm: noRM, tanggal_lahir: tanggalLahir, lokasi,
       obat_dosis: it.obatDosis, nama_obat: it.obatNama, dosis_mg: it.dosisMg,
       hari_ke: it.hariKe, ambil: it.ambil, sediaan: it.sediaan,
-      total_volume_ml: (parseFloat(it.ambil) || 0) + (it.volPelarut || 0) ? String(round2((parseFloat(it.ambil) || 0) + (it.volPelarut || 0))) + ' mL' : null,
+      total_volume_ml: it.totalVolumeMl ? String(round2(it.totalVolumeMl)) + ' mL' : null,
       nama_pelarut: it.namaPelarut, volume_pelarut_ml: it.volPelarut, cara_pemberian: it.caraPemberian,
       pelarut: it.pelarut, bud_durasi_jam: it.budDurasi,
-      tanggal_dibuat: it.tanggalDibuatISO, batch_id: batchId
+      tanggal_dibuat: it.tanggalDibuatISO, batch_id: batchId,
+      detail_obat: it.detailObat
     };
     if (existing) {
       payload.id = existing.id;
@@ -730,12 +822,7 @@ function gunakanPasien(noRM) {
     noRM: p.no_rm, namaPasien: p.nama_pasien, tanggalLahir: toISODateInput(p.tanggal_lahir),
     lokasi: last ? last.items[0].lokasi : '',
     tanggalMulai: defaultTanggalMulai(),
-    items: last ? last.items.map(r => ({
-      obatNama: r.nama_obat, dosisMg: r.dosis_mg, obatDosis: r.obat_dosis,
-      ambil: r.ambil, sediaan: r.sediaan, namaPelarut: r.nama_pelarut,
-      volPelarut: r.volume_pelarut_ml, caraPemberian: r.cara_pemberian,
-      pelarut: r.pelarut, hariKe: r.hari_ke, budDurasi: r.bud_durasi_jam
-    })) : []
+    items: last ? last.items.flatMap(r => expandEtiketRowToItems(r)) : []
   };
   navigate('entri');
 }
