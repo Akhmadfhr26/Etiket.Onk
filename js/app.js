@@ -14,6 +14,24 @@ function toggleSidebar() {
 }
 
 /* ---------------- AUTH ---------------- */
+
+// Petugas cukup ketik username pendek (mis. "depo") tanpa perlu mengetik
+// alamat email lengkap tiap kali login. Di belakang layar, username itu
+// diubah jadi email dengan domain palsu ini sebelum dikirim ke Supabase
+// (Supabase Auth memang mewajibkan format email/telepon untuk akunnya).
+// Kalau user mengetik alamat yang sudah mengandung "@", dipakai apa adanya.
+const LOGIN_USERNAME_DOMAIN = '@etiketkemo.local';
+
+function toLoginEmail(input) {
+  const v = (input || '').trim();
+  if (!v) return v;
+  return v.includes('@') ? v.toLowerCase() : v.toLowerCase() + LOGIN_USERNAME_DOMAIN;
+}
+function displayUsername(email) {
+  if (!email) return '';
+  return email.toLowerCase().endsWith(LOGIN_USERNAME_DOMAIN) ? email.slice(0, -LOGIN_USERNAME_DOMAIN.length) : email;
+}
+
 async function checkSession() {
   const { data } = await supabase.auth.getSession();
   if (data && data.session) {
@@ -32,20 +50,21 @@ function showLogin() {
 async function showApp() {
   document.getElementById('loginScreen').classList.add('hidden');
   document.getElementById('appShell').classList.remove('hidden');
-  document.getElementById('sbUserEmail').textContent = CURRENT_USER ? CURRENT_USER.email : '';
+  document.getElementById('sbUserEmail').textContent = CURRENT_USER ? displayUsername(CURRENT_USER.email) : '';
   await loadAllData();
   navigate('dashboard');
 }
 
 async function doLogin() {
-  const email = document.getElementById('loginEmail').value.trim();
+  const usernameInput = document.getElementById('loginEmail').value.trim();
   const password = document.getElementById('loginPassword').value;
   const msgEl = document.getElementById('loginMsg');
   msgEl.innerHTML = '';
-  if (!email || !password) {
-    msgEl.innerHTML = '<div class="msg err">Email dan password wajib diisi.</div>';
+  if (!usernameInput || !password) {
+    msgEl.innerHTML = '<div class="msg err">Username dan password wajib diisi.</div>';
     return;
   }
+  const email = toLoginEmail(usernameInput);
   const { data, error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) {
     msgEl.innerHTML = '<div class="msg err">' + escapeHtml(error.message) + '</div>';
@@ -976,8 +995,8 @@ function renderPengaturan(content) {
     </div>
     <div class="card" style="max-width:520px;">
       <h2>Akun</h2>
-      <p class="muted" style="font-size:12.5px;">Login sebagai: <b>${escapeHtml(CURRENT_USER ? CURRENT_USER.email : '-')}</b></p>
-      <p class="hint">Untuk menambah/menghapus akun petugas, gunakan Supabase Dashboard &gt; Authentication &gt; Users.</p>
+      <p class="muted" style="font-size:12.5px;">Login sebagai: <b>${escapeHtml(CURRENT_USER ? displayUsername(CURRENT_USER.email) : '-')}</b></p>
+      <p class="hint">Untuk menambah/menghapus akun petugas, gunakan Supabase Dashboard &gt; Authentication &gt; Users. Isi kolom Email dengan &lt;username&gt;@etiketkemo.local (mis. depo@etiketkemo.local).</p>
     </div>
   `;
 }
