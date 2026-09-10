@@ -411,8 +411,14 @@ function renderEntri(content) {
   }
 }
 
+/* PERBAIKAN: default jam untuk field "Tanggal & Jam Kemoterapi (Hari ke-1)"
+   sekarang selalu jam 11:00 pada tanggal hari ini, bukan ikut jam saat
+   petugas membuka form entri. Kalau petugas mengubah field ini secara
+   manual, nilai yang diketik tetap dipakai (fungsi ini hanya dipanggil
+   sekali untuk mengisi nilai awal). */
 function defaultTanggalMulai() {
   const d = new Date();
+  d.setHours(11, 0, 0, 0);
   d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
   return d.toISOString().slice(0, 16);
 }
