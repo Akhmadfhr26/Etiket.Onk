@@ -159,16 +159,31 @@ function computeBud(item) {
   }
   return '';
 }
+
+/* PERBAIKAN: nextEtiketId() sekarang mencari nomor urut tertinggi yang
+   benar-benar ada di CACHE.etiket (format "inj-NNN"), bukan mengandalkan
+   CACHE.etiket.length. Sebelumnya, kalau ada baris yang pernah dihapus
+   atau cache "ketinggalan" dari database, length-based ID bisa
+   bertabrakan dengan ID yang sudah ada -> insert() gagal di tengah loop
+   penyimpanan banyak regimen sekaligus, dan sisa regimen tidak
+   tersimpan tanpa pesan yang jelas terlihat. */
 function nextEtiketId() {
-  const n = (CACHE.etiket.length || 0) + 1;
-  // hindari tabrakan id kalau sudah pernah dihapus di tengah
-  let candidate, tries = 0;
+  let maxN = 0;
+  CACHE.etiket.forEach(e => {
+    const m = /^inj-(\d+)$/.exec(String(e.id || ''));
+    if (m) {
+      const n = parseInt(m[1], 10);
+      if (!isNaN(n) && n > maxN) maxN = n;
+    }
+  });
+  let candidate, n = maxN + 1;
   do {
-    candidate = 'inj-' + String(n + tries).padStart(3, '0');
-    tries++;
-  } while (CACHE.etiket.some(e => e.id === candidate) && tries < 1000);
+    candidate = 'inj-' + String(n).padStart(3, '0');
+    n++;
+  } while (CACHE.etiket.some(e => e.id === candidate));
   return candidate;
 }
+
 function toast(container, type, text) {
   container.insertAdjacentHTML('afterbegin', `<div class="msg ${type}">${escapeHtml(text)}</div>`);
 }
@@ -746,18 +761,42 @@ async function simpanEntriBatch() {
   const editId = document.getElementById('regimenContainer').dataset.editId;
   let overwritten = 0, inserted = 0;
 
-  for (const it of items) {
+  for (let idx = 0; idx < items.length; idx++) {
+    const it = items[idx];
     let existing = null;
-    if (editId) {
+
+    /* ============================================================
+       PERBAIKAN BUG UTAMA
+       ------------------------------------------------------------
+       SEBELUM: kalau form dibuka dalam mode edit (editId terisi),
+       SEMUA grup regimen dicocokkan ke `existing = editId` yang SAMA.
+       Akibatnya, kalau ada >1 grup (mis. >4 regimen, atau beberapa
+       regimen yang tidak digabung), tiap grup saling menimpa baris
+       database yang sama secara berurutan. Hasil akhirnya hanya
+       grup TERAKHIR yang benar-benar tersimpan di baris itu — grup
+       sebelumnya "hilang" (tertimpa), sehingga tidak muncul di
+       riwayat/dashboard dan tidak bisa dicetak.
+
+       SESUDAH: `editId` hanya dipakai untuk mencari existing pada
+       grup PERTAMA (idx === 0), yaitu baris yang sedang diedit.
+       Grup ke-2 dan seterusnya tetap dicek berdasarkan kombinasi
+       (no_rm + nama_obat + hari_ke) seperti mode entri baru biasa,
+       supaya masing-masing menjadi baris sendiri di database (atau
+       menimpa baris lamanya sendiri kalau memang cocok), bukan
+       menimpa baris grup pertama.
+       ============================================================ */
+    if (editId && idx === 0) {
       existing = CACHE.etiket.find(e => e.id === editId);
     } else {
       existing = CACHE.etiket.find(e =>
         e.no_rm === noRM &&
         String(e.hari_ke || '') === String(it.hariKe || '') &&
         String(e.nama_obat || '').toLowerCase() === String(it.obatNama || '').toLowerCase() &&
-        it.obatNama
+        it.obatNama &&
+        e.id !== editId // jangan sampai grup lain tidak sengaja menimpa balik baris yang sedang diedit
       );
     }
+
     const payload = {
       nama_pasien: namaPasien, no_rm: noRM, tanggal_lahir: tanggalLahir, lokasi,
       obat_dosis: it.obatDosis, nama_obat: it.obatNama, dosis_mg: it.dosisMg,
@@ -768,15 +807,16 @@ async function simpanEntriBatch() {
       tanggal_dibuat: it.tanggalDibuatISO, batch_id: batchId,
       detail_obat: it.detailObat
     };
+
     if (existing) {
       payload.id = existing.id;
       const { error } = await supabase.from('etiket').update(payload).eq('id', existing.id);
-      if (error) { toast(msgBox, 'err', 'Gagal menyimpan: ' + error.message); return; }
+      if (error) { toast(msgBox, 'err', 'Gagal menyimpan (regimen #' + (idx + 1) + '): ' + error.message); return; }
       overwritten++;
     } else {
       payload.id = nextEtiketId();
       const { error } = await supabase.from('etiket').insert(payload);
-      if (error) { toast(msgBox, 'err', 'Gagal menyimpan: ' + error.message); return; }
+      if (error) { toast(msgBox, 'err', 'Gagal menyimpan (regimen #' + (idx + 1) + '): ' + error.message); return; }
       CACHE.etiket.push(payload); // supaya nextEtiketId() berikutnya tidak tabrakan dalam loop yang sama
       inserted++;
     }
