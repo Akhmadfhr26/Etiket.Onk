@@ -214,6 +214,26 @@ function renderDashboard(content) {
         <span class="chip active" data-d="" onclick="filterByDate('')">Semua Tanggal</span>
         ${dateSet.map(d => `<span class="chip" data-d="${d}" onclick="filterByDate('${d}')">${fmtDate(d)}</span>`).join('')}
       </div>
+
+      <div class="toolbar" style="margin-top:10px;flex-wrap:wrap;gap:10px;">
+        <label style="font-size:12.5px;display:flex;align-items:center;gap:6px;">
+          📅 Pilih Tanggal:
+          <input type="date" id="datePickerFilter" onchange="filterByDatePickerValue(this.value)" style="width:auto;max-width:170px;">
+        </label>
+        <button class="btn ghost" style="padding:5px 10px;" onclick="resetDatePicker()">Reset Tanggal</button>
+        <div class="spacer"></div>
+        <button class="btn secondary" type="button" id="btnTogglePasienChecklist" onclick="togglePatientChecklist()">👤 Pilih per Pasien ▾</button>
+      </div>
+
+      <div id="patientChecklistBox" class="hidden" style="margin:8px 0 14px;padding:10px;border:1px solid #ddd;border-radius:8px;max-height:260px;overflow-y:auto;">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+          <input type="text" id="searchPasienChecklist" class="search-box" placeholder="Cari nama pasien di daftar ini..." oninput="renderPatientChecklist()" style="flex:1;min-width:200px;">
+          <button class="btn ghost" style="padding:5px 10px;" onclick="centangSemuaPasien(true)">Centang Semua</button>
+          <button class="btn ghost" style="padding:5px 10px;" onclick="centangSemuaPasien(false)">Kosongkan Semua</button>
+        </div>
+        <div id="patientCheckboxList"></div>
+      </div>
+
       <div style="overflow-x:auto;">
         <table class="data-grid" id="etiketTable">
           <thead>
@@ -241,7 +261,90 @@ function renderDashboard(content) {
 function filterByDate(d) {
   window._activeDateFilter = d;
   document.querySelectorAll('#dateChips .chip').forEach(c => c.classList.toggle('active', c.getAttribute('data-d') === d));
+  const picker = document.getElementById('datePickerFilter');
+  if (picker) picker.value = d || '';
   renderEtiketRows();
+  // Kalau panel checklist pasien sedang terbuka, refresh juga daftarnya
+  // supaya mengikuti tanggal yang baru difilter.
+  const box = document.getElementById('patientChecklistBox');
+  if (box && !box.classList.contains('hidden')) renderPatientChecklist();
+}
+
+// Dipanggil saat petugas memilih tanggal lewat kalender (input type="date").
+function filterByDatePickerValue(value) {
+  filterByDate(value || '');
+}
+
+function resetDatePicker() {
+  const picker = document.getElementById('datePickerFilter');
+  if (picker) picker.value = '';
+  filterByDate('');
+}
+
+/* ---------------- CHECKLIST NAMA PASIEN (untuk cetak massal) ---------------- */
+
+function togglePatientChecklist() {
+  const box = document.getElementById('patientChecklistBox');
+  if (!box) return;
+  const willShow = box.classList.contains('hidden');
+  box.classList.toggle('hidden', !willShow);
+  if (willShow) renderPatientChecklist();
+}
+
+// Menampilkan daftar pasien unik (mengikuti filter tanggal & kotak pencarian
+// di dalam panel ini) sebagai checkbox. Mencentang satu pasien akan
+// mencentang semua baris etiket miliknya yang sedang tampil di tabel.
+function renderPatientChecklist() {
+  const box = document.getElementById('patientCheckboxList');
+  if (!box) return;
+  const dateFilter = window._activeDateFilter || '';
+  const q = (document.getElementById('searchPasienChecklist')?.value || '').toLowerCase().trim();
+
+  const rows = dateFilter
+    ? CACHE.etiket.filter(r => toISODateInput(r.tanggal_dibuat) === dateFilter)
+    : CACHE.etiket;
+
+  const map = {};
+  rows.forEach(r => {
+    if (!map[r.no_rm]) map[r.no_rm] = { nama: r.nama_pasien, count: 0 };
+    map[r.no_rm].count++;
+  });
+
+  let list = Object.entries(map);
+  if (q) {
+    list = list.filter(([noRM, info]) => (info.nama + ' ' + noRM).toLowerCase().includes(q));
+  }
+  list.sort((a, b) => a[1].nama.localeCompare(b[1].nama, 'id'));
+
+  if (!list.length) {
+    box.innerHTML = '<p class="muted" style="font-size:12.5px;">Tidak ada pasien yang cocok.</p>';
+    return;
+  }
+
+  box.innerHTML = list.map(([noRM, info]) => `
+    <label class="checkbox-inline" style="display:block;padding:4px 0;">
+      <input type="checkbox" class="patient-check" data-norm="${escapeHtml(noRM)}" onchange="terapkanCentangPasien('${escapeHtml(noRM)}', this.checked)">
+      ${escapeHtml(info.nama)} <span class="muted rm-code">(${escapeHtml(noRM)})</span> — ${info.count} etiket
+    </label>`
+  ).join('');
+}
+
+// Mencentang / mengosongkan semua baris etiket (checkbox di tabel) milik
+// satu No RM tertentu, sesuai baris mana saja yang sedang tampil di tabel
+// (mengikuti pencarian & filter tanggal di tabel utama).
+function terapkanCentangPasien(noRM, checked) {
+  document.querySelectorAll('.row-check').forEach(cb => {
+    if (cb.dataset.norm === noRM) cb.checked = checked;
+  });
+}
+
+// Tombol "Centang Semua" / "Kosongkan Semua" di panel checklist pasien:
+// menerapkan ke semua pasien yang sedang tampil di panel ini sekaligus.
+function centangSemuaPasien(state) {
+  document.querySelectorAll('.patient-check').forEach(cb => {
+    cb.checked = state;
+    terapkanCentangPasien(cb.dataset.norm, state);
+  });
 }
 
 function renderEtiketRows() {
@@ -259,7 +362,7 @@ function renderEtiketRows() {
   }
   tbody.innerHTML = rows.map(r => `
     <tr>
-      <td class="checkbox-cell"><input type="checkbox" class="row-check" value="${r.id}"></td>
+      <td class="checkbox-cell"><input type="checkbox" class="row-check" value="${r.id}" data-norm="${escapeHtml(r.no_rm)}"></td>
       <td><b>${escapeHtml(r.nama_pasien)}</b><br><span class="muted rm-code">${escapeHtml(r.no_rm)}</span></td>
       <td>${escapeHtml(r.obat_dosis)}</td>
       <td>${r.hari_ke ? '<span class="badge">H-' + r.hari_ke + '</span>' : ''}</td>
