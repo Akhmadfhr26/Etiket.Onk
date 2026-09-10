@@ -756,46 +756,60 @@ async function simpanEntriBatch() {
   // 1) upsert pasien
   await supabase.from('pasien').upsert({ no_rm: noRM, nama_pasien: namaPasien, tanggal_lahir: tanggalLahir, updated_at: new Date().toISOString() });
 
-  // 2) simpan tiap item: timpa kalau (no_rm + nama_obat + hari_ke) sudah ada, kalau tidak insert baru
+  // 2) simpan tiap item: timpa kalau memang baris yang sama sudah ada, kalau tidak insert baru
   const batchId = 'b-' + Date.now();
   const editId = document.getElementById('regimenContainer').dataset.editId;
   let overwritten = 0, inserted = 0;
+
+  /* PERBAIKAN BUG #2 (duplikat nama obat, dosis beda dalam 1x entri):
+     `usedExistingIds` mencatat baris database mana saja yang SUDAH
+     "diklaim" oleh salah satu grup dalam proses simpan kali ini.
+     Ini mencegah grup berikutnya salah mencocokkan diri ke baris
+     yang baru saja dibuat/ditimpa oleh grup sebelumnya dalam loop
+     yang sama (mis. Mesna 900 mg dan Mesna 2000 mg pada hari yang
+     sama — tanpa penanda ini, grup kedua akan menganggap baris
+     Mesna 900 yang baru dibuat sebagai "existing" miliknya sendiri
+     dan menimpanya, sehingga salah satu dosis hilang). */
+  const usedExistingIds = new Set();
 
   for (let idx = 0; idx < items.length; idx++) {
     const it = items[idx];
     let existing = null;
 
     /* ============================================================
-       PERBAIKAN BUG UTAMA
+       PERBAIKAN BUG #1
        ------------------------------------------------------------
        SEBELUM: kalau form dibuka dalam mode edit (editId terisi),
        SEMUA grup regimen dicocokkan ke `existing = editId` yang SAMA.
        Akibatnya, kalau ada >1 grup (mis. >4 regimen, atau beberapa
        regimen yang tidak digabung), tiap grup saling menimpa baris
        database yang sama secara berurutan. Hasil akhirnya hanya
-       grup TERAKHIR yang benar-benar tersimpan di baris itu — grup
-       sebelumnya "hilang" (tertimpa), sehingga tidak muncul di
-       riwayat/dashboard dan tidak bisa dicetak.
+       grup TERAKHIR yang benar-benar tersimpan di baris itu.
 
        SESUDAH: `editId` hanya dipakai untuk mencari existing pada
        grup PERTAMA (idx === 0), yaitu baris yang sedang diedit.
-       Grup ke-2 dan seterusnya tetap dicek berdasarkan kombinasi
-       (no_rm + nama_obat + hari_ke) seperti mode entri baru biasa,
-       supaya masing-masing menjadi baris sendiri di database (atau
-       menimpa baris lamanya sendiri kalau memang cocok), bukan
-       menimpa baris grup pertama.
        ============================================================ */
     if (editId && idx === 0) {
       existing = CACHE.etiket.find(e => e.id === editId);
     } else {
+      /* PERBAIKAN BUG #2: kriteria pencocokan ditambah dosis_mg dan
+         nama_pelarut (tidak hanya no_rm + hari_ke + nama_obat), dan
+         baris yang sudah dipakai grup lain (usedExistingIds) di-skip.
+         Ini membedakan Mesna 900mg vs Mesna 2000mg pada hari yang
+         sama, yang sebelumnya dianggap "obat yang sama" lalu saling
+         menimpa. */
       existing = CACHE.etiket.find(e =>
         e.no_rm === noRM &&
         String(e.hari_ke || '') === String(it.hariKe || '') &&
         String(e.nama_obat || '').toLowerCase() === String(it.obatNama || '').toLowerCase() &&
+        String(e.dosis_mg ?? '') === String(it.dosisMg ?? '') &&
+        String(e.nama_pelarut || '').toLowerCase() === String(it.namaPelarut || '').toLowerCase() &&
         it.obatNama &&
-        e.id !== editId // jangan sampai grup lain tidak sengaja menimpa balik baris yang sedang diedit
+        e.id !== editId &&
+        !usedExistingIds.has(e.id)
       );
     }
+    if (existing) usedExistingIds.add(existing.id);
 
     const payload = {
       nama_pasien: namaPasien, no_rm: noRM, tanggal_lahir: tanggalLahir, lokasi,
