@@ -28,9 +28,10 @@
 
   .fit-content { display: flex; flex-direction: column; justify-content: flex-start; width: 100%; transform-origin: top left; }
 
-  .pasien-block { margin-bottom: 0.4mm; flex-shrink: 0; padding-bottom: 0.4mm; border-bottom: 0.4mm solid #000; }
-  .pasien-row { font-size: 11pt; font-weight: 900; line-height: 1.1; color: #000; overflow-wrap: break-word; word-break: break-word; }
+  .pasien-block { margin-bottom: 0.4mm; flex-shrink: 0; padding-bottom: 0.4mm; border-bottom: 0.4mm solid #000; position: relative; }
+  .pasien-row { font-size: 11pt; font-weight: 900; line-height: 1.1; color: #000; overflow-wrap: break-word; word-break: break-word; padding-right: 7mm; }
   .lokasi-row { font-size: 8pt; font-weight: 800; line-height: 1.15; color: #000; overflow-wrap: break-word; word-break: break-word; margin-top: 0.2mm; }
+  .tpn-badge { position: absolute; top: -0.9mm; right: -0.8mm; background: #000; color: #fff; font-size: 6.6pt; font-weight: 900; letter-spacing: .03em; padding: 0.3mm 1.3mm; border-radius: 1mm; }
 
   /* Kotak komposisi: dibuat sebagai CSS grid 2 kolom (nama | : volume)
      supaya titik dua & volume semua baris sejajar rapi, walau panjang
@@ -39,11 +40,15 @@
   .komposisi-box { border-top: 0.5mm solid #000; border-bottom: 0.5mm solid #000; padding: 0.6mm 1mm; margin-bottom: 0.2mm; flex-shrink: 0; display: grid; grid-template-columns: max-content max-content; column-gap: 1mm; row-gap: 0; }
   .komposisi-nama, .komposisi-vol { font-size: 11.5pt; font-weight: 900; line-height: 1.28; color: #000; white-space: nowrap; }
   .komposisi-nama { text-align: left; }
-  .total-row { font-size: 7.5pt; font-weight: 800; color: #000; margin-top: 0.2mm; margin-bottom: 0.2mm; flex-shrink: 0; }
-  .total-row b { font-weight: 900; }
 
-  .bud-box { border-top: 0.45mm solid #000; border-bottom: 0.45mm solid #000; padding: 0.3mm 1mm; display: flex; justify-content: space-between; align-items: baseline; gap: 1.5mm; margin-top: 0.3mm; flex-shrink: 0; }
-  .bud-label, .bud-tanggal { font-size: 8.5pt; font-weight: 900; color: #000; white-space: nowrap; }
+  /* Total Volume & BUD digabung sebaris dalam satu kotak, dipisah garis
+     putus-putus dari kotak komposisi di atasnya supaya ada jeda visual
+     tanpa menambah tinggi label. */
+  .bud-box { border-top: 0.35mm dashed #000; border-bottom: 0.45mm solid #000; padding: 0.35mm 1mm; display: flex; justify-content: space-between; align-items: baseline; gap: 1.5mm; margin-top: 0.3mm; flex-shrink: 0; }
+  .total-inline { font-size: 7.5pt; font-weight: 800; color: #000; white-space: nowrap; }
+  .total-inline b { font-weight: 900; }
+  .bud-compact { font-size: 8pt; font-weight: 900; color: #000; white-space: nowrap; padding-left: 1.5mm; border-left: 0.3mm dashed #000; }
+  .bud-compact.no-divider { padding-left: 0; border-left: none; }
   .print-bar { text-align: center; padding: 10px; font-family: Arial, sans-serif; }
   .print-bar p { font-size: 11px; color: #666; margin: 6px 0 0; }
   @media print { .print-bar { display: none; } }
@@ -142,16 +147,16 @@ function autofitLabels(minScale){
     <div class="label">
       <div class="fit-content">
         <div class="pasien-block">
+          <span class="tpn-badge">TPN</span>
           <div class="pasien-row">${esc(d.nama_pasien)} / ${esc(d.no_rm)} / ${esc(String(d.tanggal_lahir||'').split('T')[0])}</div>
           ${d.lokasi ? `<div class="lokasi-row">${esc(d.lokasi)}</div>` : ''}
         </div>
         <div class="komposisi-box">
           ${komposisi.map(k => `<span class="komposisi-nama">${esc(k.nama)}</span><span class="komposisi-vol">: ${esc(k.volume)}</span>`).join('')}
         </div>
-        ${totalVol ? `<div class="total-row">Total Volume: <b>${esc(totalVol)}</b></div>` : ''}
         <div class="bud-box">
-          <span class="bud-label">BUD (EXP)${d.bud_durasi_jam ? `: (${esc(d.bud_durasi_jam)}j)` : ''}</span>
-          <span class="bud-tanggal">${esc(computeBud(d))}</span>
+          ${totalVol ? `<span class="total-inline">Total Volume: <b>${esc(totalVol)}</b></span>` : ''}
+          <span class="bud-compact${totalVol ? '' : ' no-divider'}">BUD (EXP)${d.bud_durasi_jam ? ` (${esc(d.bud_durasi_jam)}j)` : ''}: ${esc(computeBud(d))}</span>
         </div>
       </div>
     </div>
