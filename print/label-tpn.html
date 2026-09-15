@@ -30,11 +30,11 @@
 
   .pasien-block { margin-bottom: 0.4mm; flex-shrink: 0; padding-bottom: 0.4mm; border-bottom: 0.4mm solid #000; }
   .pasien-row { font-size: 11pt; font-weight: 900; line-height: 1.1; color: #000; overflow-wrap: break-word; word-break: break-word; }
+  .lokasi-row { font-size: 8pt; font-weight: 800; line-height: 1.15; color: #000; overflow-wrap: break-word; word-break: break-word; margin-top: 0.2mm; }
 
-  /* Kotak komposisi: header kecil "TPN" lalu tiap sediaan tampil sebagai
-     satu baris "Nama Volume" (mis. "D10% 250 ml"), berurutan ke bawah. */
+  /* Kotak komposisi: tiap sediaan tampil sebagai satu baris "Nama Volume"
+     (mis. "D10% 250 ml"), berurutan ke bawah, tanpa judul/header. */
   .komposisi-box { border-top: 0.5mm solid #000; border-bottom: 0.5mm solid #000; padding: 0.6mm 1mm; margin-bottom: 0.2mm; flex-shrink: 0; }
-  .komposisi-title { font-size: 7pt; font-weight: 800; letter-spacing: .04em; color: #000; margin-bottom: 0.3mm; }
   .komposisi-line { font-size: 11.5pt; font-weight: 900; line-height: 1.28; color: #000; overflow-wrap: break-word; word-break: break-word; white-space: nowrap; }
 
   .bud-box { border-top: 0.45mm solid #000; border-bottom: 0.45mm solid #000; padding: 0.3mm 1mm; display: flex; justify-content: space-between; align-items: baseline; gap: 1.5mm; margin-top: 0.3mm; flex-shrink: 0; }
@@ -115,9 +115,9 @@ function autofitLabels(minScale){
       <div class="fit-content">
         <div class="pasien-block">
           <div class="pasien-row">${esc(d.nama_pasien)} / ${esc(d.no_rm)} / ${esc(String(d.tanggal_lahir||'').split('T')[0])}</div>
+          ${d.lokasi ? `<div class="lokasi-row">${esc(d.lokasi)}</div>` : ''}
         </div>
         <div class="komposisi-box">
-          <div class="komposisi-title">KOMPOSISI TPN</div>
           ${komposisi.map(k => `<div class="komposisi-line">${esc(k.nama)} ${esc(k.volume)}</div>`).join('')}
         </div>
         <div class="bud-box">
