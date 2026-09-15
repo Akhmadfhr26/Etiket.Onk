@@ -3,9 +3,10 @@
    ============================================================ */
 
 let CURRENT_USER = null;
-let CACHE = { etiket: [], pasien: [], obat: [], pelarut: [], settings: {} };
+let CACHE = { etiket: [], pasien: [], obat: [], pelarut: [], settings: {}, etiketTpn: [] };
 let CURRENT_ROUTE = 'dashboard';
 let PREFILL_ENTRI = null; // dipakai saat "Gunakan" dari Daftar Pasien
+let PREFILL_TPN = null;   // sama seperti PREFILL_ENTRI, tapi untuk form Entri TPN
 
 /* ---------------- SIDEBAR ---------------- */
 
@@ -82,12 +83,13 @@ async function doLogout() {
 
 /* ---------------- DATA LOADING ---------------- */
 async function loadAllData() {
-  const [etiketRes, pasienRes, obatRes, pelarutRes, settingsRes] = await Promise.all([
+  const [etiketRes, pasienRes, obatRes, pelarutRes, settingsRes, etiketTpnRes] = await Promise.all([
     supabase.from('etiket').select('*').order('created_at', { ascending: false }),
     supabase.from('pasien').select('*').order('nama_pasien', { ascending: true }),
     supabase.from('obat').select('*').order('nama_obat', { ascending: true }),
     supabase.from('pelarut').select('*').order('nama_pelarut', { ascending: true }),
-    supabase.from('pengaturan').select('*')
+    supabase.from('pengaturan').select('*'),
+    supabase.from('etiket_tpn').select('*').order('created_at', { ascending: false })
   ]);
   CACHE.etiket = etiketRes.data || [];
   CACHE.pasien = pasienRes.data || [];
@@ -95,6 +97,7 @@ async function loadAllData() {
   CACHE.pelarut = pelarutRes.data || [];
   CACHE.settings = {};
   (settingsRes.data || []).forEach(r => CACHE.settings[r.key] = r.value);
+  CACHE.etiketTpn = etiketTpnRes.data || [];
   document.getElementById('sbNamaRS').textContent = CACHE.settings.nama_rs || 'Etiket Kemo';
 }
 
@@ -105,6 +108,8 @@ const PAGES = {
   pasien:     { title: 'Daftar Pasien',    sub: 'Riwayat kunjungan tiap pasien',             render: renderPasien },
   obat:       { title: 'Database Obat',    sub: 'Nama obat & konsentrasi untuk kalkulasi',   render: renderObat },
   pelarut:    { title: 'Database Pelarut', sub: 'Daftar pelarut baku (NaCl 0,9%, D5%, dll)', render: renderPelarut },
+  tpn_dashboard: { title: 'Daftar Etiket TPN', sub: 'Semua etiket TPN yang tersimpan',        render: renderTpnDashboard },
+  tpn_entri:     { title: 'Entri TPN Baru',    sub: 'Tambah atau perbarui etiket TPN pasien', render: renderTpnEntri },
   pengaturan: { title: 'Pengaturan',       sub: 'Identitas rumah sakit',                     render: renderPengaturan }
 };
 
@@ -1015,6 +1020,343 @@ async function hapusPasienTotal(noRM) {
   await supabase.from('pasien').delete().eq('no_rm', noRM);
   await loadAllData();
   navigate('pasien');
+}
+
+/* ============================================================
+   MODUL TPN — terpisah dari etiket onko (tabel etiket_tpn sendiri),
+   tapi berbagi tabel "pasien" & "pengaturan" (identitas & nama RS sama).
+   Satu etiket TPN = satu baris "komposisi" (nama sediaan + volume)
+   yang dicetak berbaris pada label yang sama, contoh:
+     D10% 250 ml
+     KCl 7,46% 12 ml
+   ============================================================ */
+
+function nextTpnId() {
+  let maxN = 0;
+  CACHE.etiketTpn.forEach(e => {
+    const m = /^tpn-(\d+)$/.exec(String(e.id || ''));
+    if (m) {
+      const n = parseInt(m[1], 10);
+      if (!isNaN(n) && n > maxN) maxN = n;
+    }
+  });
+  let candidate, n = maxN + 1;
+  do {
+    candidate = 'tpn-' + String(n).padStart(3, '0');
+    n++;
+  } while (CACHE.etiketTpn.some(e => e.id === candidate));
+  return candidate;
+}
+
+/* ---------------- HALAMAN: DAFTAR ETIKET TPN ---------------- */
+function renderTpnDashboard(content) {
+  const rows = CACHE.etiketTpn;
+  const dateSet = Array.from(new Set(rows.map(r => toISODateInput(r.tanggal_dibuat)).filter(Boolean))).sort().reverse();
+
+  content.innerHTML = `
+    <div class="stat-row">
+      <div class="stat-box"><div class="num">${rows.length}</div><div class="lab">Total Etiket TPN</div></div>
+      <div class="stat-box"><div class="num">${Array.from(new Set(rows.map(r=>r.no_rm).filter(Boolean))).length}</div><div class="lab">Total Pasien TPN</div></div>
+    </div>
+    <div class="card">
+      <div class="toolbar">
+        <input type="text" id="searchTpn" class="search-box" placeholder="Cari nama pasien / No RM...">
+        <div class="spacer"></div>
+        <button class="btn secondary" onclick="navigate('tpn_entri')">➕ Entri TPN Baru</button>
+        <button class="btn" onclick="cetakTerpilihTpn()">🏷️ Cetak Etiket TPN</button>
+        <button class="btn danger" onclick="hapusTerpilihTpn()">🗑️ Hapus Terpilih</button>
+      </div>
+      <div class="chip-row" id="tpnDateChips">
+        <span class="chip active" data-d="" onclick="filterByDateTpn('')">Semua Tanggal</span>
+        ${dateSet.map(d => `<span class="chip" data-d="${d}" onclick="filterByDateTpn('${d}')">${fmtDate(d)}</span>`).join('')}
+      </div>
+      <div style="overflow-x:auto;margin-top:10px;">
+        <table class="data-grid" id="tpnTable">
+          <thead>
+            <tr>
+              <th class="checkbox-cell"><input type="checkbox" onclick="toggleAllRowsTpn(this)"></th>
+              <th>Pasien / No RM</th>
+              <th>Komposisi</th>
+              <th>Tanggal Dibuat</th>
+              <th>BUD (EXP)</th>
+              <th>Petugas</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="tpnTbody"></tbody>
+        </table>
+      </div>
+    </div>
+  `;
+  document.getElementById('searchTpn').addEventListener('input', renderTpnRows);
+  window._activeDateFilterTpn = '';
+  renderTpnRows();
+}
+
+function filterByDateTpn(d) {
+  window._activeDateFilterTpn = d;
+  document.querySelectorAll('#tpnDateChips .chip').forEach(c => c.classList.toggle('active', c.getAttribute('data-d') === d));
+  renderTpnRows();
+}
+
+function komposisiRingkas(row) {
+  if (!Array.isArray(row.komposisi) || !row.komposisi.length) return '';
+  return row.komposisi.map(k => [k.nama, k.volume].filter(Boolean).join(' ')).join(', ');
+}
+
+function renderTpnRows() {
+  const q = (document.getElementById('searchTpn')?.value || '').toLowerCase().trim();
+  const dateFilter = window._activeDateFilterTpn || '';
+  const rows = CACHE.etiketTpn.filter(r => {
+    if (dateFilter && toISODateInput(r.tanggal_dibuat) !== dateFilter) return false;
+    if (!q) return true;
+    return [r.nama_pasien, r.no_rm, komposisiRingkas(r)].some(v => String(v || '').toLowerCase().includes(q));
+  });
+  const tbody = document.getElementById('tpnTbody');
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="7" class="muted" style="text-align:center;padding:24px;">Tidak ada data.</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td class="checkbox-cell"><input type="checkbox" class="row-check-tpn" value="${r.id}" data-norm="${escapeHtml(r.no_rm)}"></td>
+      <td><b>${escapeHtml(r.nama_pasien)}</b><br><span class="muted rm-code">${escapeHtml(r.no_rm)}</span></td>
+      <td>${escapeHtml(komposisiRingkas(r))}</td>
+      <td>${fmtDateTime(r.tanggal_dibuat)}</td>
+      <td>${computeBud(r)}</td>
+      <td>${escapeHtml(r.petugas || '')}</td>
+      <td class="actions-cell">
+        <button class="icon-btn" title="Edit" onclick="editTpn('${r.id}')">✏️</button>
+        <button class="icon-btn danger" title="Hapus" onclick="hapusSatuTpn('${r.id}')">🗑️</button>
+      </td>
+    </tr>
+  `).join('');
+}
+
+function toggleAllRowsTpn(cb) {
+  document.querySelectorAll('.row-check-tpn').forEach(c => c.checked = cb.checked);
+}
+function getCheckedIdsTpn() {
+  return Array.from(document.querySelectorAll('.row-check-tpn:checked')).map(c => c.value);
+}
+
+function cetakTerpilihTpn() {
+  const ids = getCheckedIdsTpn();
+  if (!ids.length) { alert('Pilih minimal satu etiket TPN dulu (centang di tabel).'); return; }
+  window.open('print/label-tpn.html?ids=' + encodeURIComponent(ids.join(',')), '_blank');
+}
+
+async function hapusTerpilihTpn() {
+  const ids = getCheckedIdsTpn();
+  if (!ids.length) { alert('Pilih minimal satu etiket TPN dulu.'); return; }
+  if (!confirm('Hapus ' + ids.length + ' etiket TPN terpilih? Tindakan ini tidak bisa dibatalkan.')) return;
+  const { error } = await supabase.from('etiket_tpn').delete().in('id', ids);
+  if (error) { alert('Gagal menghapus: ' + error.message); return; }
+  await loadAllData();
+  navigate('tpn_dashboard');
+}
+
+async function hapusSatuTpn(id) {
+  if (!confirm('Hapus etiket TPN ini?')) return;
+  const { error } = await supabase.from('etiket_tpn').delete().eq('id', id);
+  if (error) { alert('Gagal menghapus: ' + error.message); return; }
+  await loadAllData();
+  navigate('tpn_dashboard');
+}
+
+function editTpn(id) {
+  const row = CACHE.etiketTpn.find(r => r.id === id);
+  if (!row) return;
+  PREFILL_TPN = {
+    editId: row.id,
+    namaPasien: row.nama_pasien, noRM: row.no_rm, tanggalLahir: toISODateInput(row.tanggal_lahir),
+    lokasi: row.lokasi,
+    tanggalMulai: row.tanggal_dibuat ? new Date(row.tanggal_dibuat).toISOString().slice(0,16) : '',
+    budDurasi: row.bud_durasi_jam || 24,
+    komposisi: Array.isArray(row.komposisi) ? row.komposisi : []
+  };
+  navigate('tpn_entri');
+}
+
+/* ---------------- HALAMAN: ENTRI TPN BARU ---------------- */
+let tpnItemUid = 0;
+
+function renderTpnEntri(content) {
+  const prefill = PREFILL_TPN;
+  PREFILL_TPN = null;
+  tpnItemUid = 0;
+
+  content.innerHTML = `
+    <div id="tpnEntriMsg"></div>
+    <div class="card">
+      <h2>Data Pasien</h2>
+      <div class="row3">
+        <div>
+          <label>No RM *</label>
+          <input type="text" id="t_noRM" list="pasienRmListTpn" placeholder="000123456" oninput="lookupPasienByRMTpn()">
+          <datalist id="pasienRmListTpn">${CACHE.pasien.map(p => `<option value="${escapeHtml(p.no_rm)}">${escapeHtml(p.nama_pasien)}</option>`).join('')}</datalist>
+        </div>
+        <div>
+          <label>Nama Pasien *</label>
+          <input type="text" id="t_namaPasien" placeholder="Nama lengkap">
+        </div>
+        <div>
+          <label>Tanggal Lahir</label>
+          <input type="date" id="t_tanggalLahir">
+        </div>
+      </div>
+      <div class="row2">
+        <div>
+          <label>Lokasi / Ruang</label>
+          <input type="text" id="t_lokasi" placeholder="ENGGANG LT.3 / KAMAR 305 / BED 03">
+        </div>
+        <div>
+          <label>Tanggal &amp; Jam Dibuat *</label>
+          <input type="datetime-local" id="t_tanggalMulai">
+        </div>
+      </div>
+      <div class="row2">
+        <div>
+          <label>BUD Durasi (jam)</label>
+          <input type="number" id="t_budDurasi" value="24" step="0.5">
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Komposisi TPN</h2>
+      <p class="hint" style="margin-top:0;">Tiap baris akan tampil di etiket persis seperti ditulis, contoh: <b>D10% 250 ml</b>, <b>KCl 7,46% 12 ml</b>.</p>
+      <div id="tpnKomposisiContainer"></div>
+      <button class="btn secondary" type="button" onclick="tambahKomposisiItem()">➕ Tambah Sediaan</button>
+    </div>
+
+    <div class="card">
+      <button class="btn" onclick="simpanTpnEntri()">💾 Simpan Etiket TPN</button>
+      <button class="btn ghost" onclick="navigate('tpn_dashboard')">Batal</button>
+    </div>
+  `;
+
+  document.getElementById('tpnKomposisiContainer').dataset.editId = (prefill && prefill.editId) || '';
+
+  if (prefill) {
+    document.getElementById('t_noRM').value = prefill.noRM || '';
+    document.getElementById('t_namaPasien').value = prefill.namaPasien || '';
+    document.getElementById('t_tanggalLahir').value = prefill.tanggalLahir || '';
+    document.getElementById('t_lokasi').value = prefill.lokasi || '';
+    document.getElementById('t_tanggalMulai').value = prefill.tanggalMulai || defaultTanggalMulai();
+    document.getElementById('t_budDurasi').value = prefill.budDurasi || 24;
+    (prefill.komposisi || []).forEach(k => tambahKomposisiItem(k));
+    if (!prefill.komposisi || !prefill.komposisi.length) tambahKomposisiItem();
+  } else {
+    document.getElementById('t_tanggalMulai').value = defaultTanggalMulai();
+    tambahKomposisiItem();
+  }
+}
+
+function lookupPasienByRMTpn() {
+  const rm = document.getElementById('t_noRM').value.trim();
+  const p = CACHE.pasien.find(x => x.no_rm === rm);
+  if (p) {
+    document.getElementById('t_namaPasien').value = p.nama_pasien;
+    document.getElementById('t_tanggalLahir').value = toISODateInput(p.tanggal_lahir);
+  }
+}
+
+function komposisiItemTemplate(uid) {
+  return `
+  <div class="regimen-item" id="tpnItem_${uid}" data-uid="${uid}">
+    <div class="item-head">
+      <span class="item-title"><span class="item-badge item-num"></span>Sediaan</span>
+      <button type="button" class="btn ghost" style="padding:4px 10px;" onclick="hapusKomposisiItem(${uid})">🗑 Hapus</button>
+    </div>
+    <div class="row2">
+      <div><label>Nama Sediaan *</label><input type="text" id="tpnNama_${uid}" placeholder="D10%"></div>
+      <div><label>Volume *</label><input type="text" id="tpnVolume_${uid}" placeholder="250 ml"></div>
+    </div>
+  </div>`;
+}
+
+function tambahKomposisiItem(prefillItem) {
+  tpnItemUid += 1;
+  const uid = tpnItemUid;
+  document.getElementById('tpnKomposisiContainer').insertAdjacentHTML('beforeend', komposisiItemTemplate(uid));
+  if (prefillItem) {
+    document.getElementById('tpnNama_' + uid).value = prefillItem.nama || '';
+    document.getElementById('tpnVolume_' + uid).value = prefillItem.volume || '';
+  }
+  renderKomposisiNumbers();
+}
+
+function hapusKomposisiItem(uid) {
+  const items = document.querySelectorAll('#tpnKomposisiContainer .regimen-item');
+  if (items.length <= 1) return;
+  document.getElementById('tpnItem_' + uid)?.remove();
+  renderKomposisiNumbers();
+}
+
+function renderKomposisiNumbers() {
+  const allItems = document.querySelectorAll('#tpnKomposisiContainer .regimen-item');
+  allItems.forEach((el, idx) => {
+    el.querySelector('.item-num').textContent = idx + 1;
+    el.querySelector('.btn.ghost').style.display = allItems.length > 1 ? 'inline-flex' : 'none';
+  });
+}
+
+async function simpanTpnEntri() {
+  const msgBox = document.getElementById('tpnEntriMsg');
+  msgBox.innerHTML = '';
+  const noRM = document.getElementById('t_noRM').value.trim();
+  const namaPasien = document.getElementById('t_namaPasien').value.trim();
+  const tanggalLahir = document.getElementById('t_tanggalLahir').value || null;
+  const lokasi = document.getElementById('t_lokasi').value.trim();
+  const tanggalMulai = document.getElementById('t_tanggalMulai').value;
+  const budDurasi = parseFloat(document.getElementById('t_budDurasi').value) || 24;
+
+  if (!noRM || !namaPasien || !tanggalMulai) {
+    toast(msgBox, 'err', 'No RM, Nama Pasien, dan Tanggal & Jam Dibuat wajib diisi.');
+    return;
+  }
+
+  const itemEls = Array.from(document.querySelectorAll('#tpnKomposisiContainer .regimen-item'));
+  const komposisi = [];
+  for (let i = 0; i < itemEls.length; i++) {
+    const uid = itemEls[i].getAttribute('data-uid');
+    const nama = document.getElementById('tpnNama_' + uid).value.trim();
+    const volume = document.getElementById('tpnVolume_' + uid).value.trim();
+    if (!nama || !volume) {
+      toast(msgBox, 'err', 'Sediaan #' + (i + 1) + ': Nama Sediaan dan Volume wajib diisi.');
+      return;
+    }
+    komposisi.push({ nama, volume });
+  }
+  if (!komposisi.length) {
+    toast(msgBox, 'err', 'Minimal harus ada 1 sediaan pada komposisi.');
+    return;
+  }
+
+  await supabase.from('pasien').upsert({ no_rm: noRM, nama_pasien: namaPasien, tanggal_lahir: tanggalLahir, updated_at: new Date().toISOString() });
+
+  const editId = document.getElementById('tpnKomposisiContainer').dataset.editId;
+  const payload = {
+    nama_pasien: namaPasien, no_rm: noRM, tanggal_lahir: tanggalLahir, lokasi,
+    komposisi, bud_durasi_jam: budDurasi,
+    tanggal_dibuat: isoLocalFromInput(tanggalMulai),
+    batch_id: editId || ('tpn-b-' + Date.now())
+  };
+
+  let error;
+  if (editId) {
+    ({ error } = await supabase.from('etiket_tpn').update(payload).eq('id', editId));
+  } else {
+    payload.id = nextTpnId();
+    ({ error } = await supabase.from('etiket_tpn').insert(payload));
+  }
+  if (error) { toast(msgBox, 'err', 'Gagal menyimpan: ' + error.message); return; }
+
+  await loadAllData();
+  navigate('tpn_dashboard');
+  const dash = document.getElementById('content');
+  toast(dash, 'ok', editId ? 'Etiket TPN diperbarui.' : 'Etiket TPN baru tersimpan.');
 }
 
 /* ============================================================
