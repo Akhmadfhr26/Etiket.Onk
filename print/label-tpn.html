@@ -41,14 +41,15 @@
   .komposisi-nama, .komposisi-vol { font-size: 11.5pt; font-weight: 900; line-height: 1.28; color: #000; white-space: nowrap; }
   .komposisi-nama { text-align: left; }
 
-  /* Total Volume & BUD digabung sebaris dalam satu kotak, dipisah garis
-     putus-putus dari kotak komposisi di atasnya supaya ada jeda visual
-     tanpa menambah tinggi label. */
-  .bud-box { border-top: 0.35mm dashed #000; border-bottom: 0.45mm solid #000; padding: 0.35mm 1mm; display: flex; justify-content: space-between; align-items: baseline; gap: 1.5mm; margin-top: 0.3mm; flex-shrink: 0; }
+  /* Total Volume & BUD sekarang ditampilkan pada baris terpisah (vertikal),
+     bukan lagi sebaris. Tetap dalam satu kotak yang dipisah garis
+     putus-putus dari kotak komposisi di atasnya. */
+  .bud-box { border-top: 0.35mm dashed #000; border-bottom: 0.45mm solid #000; padding: 0.35mm 1mm; display: block; margin-top: 0.3mm; flex-shrink: 0; }
+  .bud-row { display: block; line-height: 1.2; }
+  .bud-row + .bud-row { margin-top: 0.3mm; }
   .total-inline { font-size: 7.5pt; font-weight: 800; color: #000; white-space: nowrap; }
   .total-inline b { font-weight: 900; }
-  .bud-compact { font-size: 8pt; font-weight: 900; color: #000; white-space: nowrap; padding-left: 1.5mm; border-left: 0.3mm dashed #000; }
-  .bud-compact.no-divider { padding-left: 0; border-left: none; }
+  .bud-compact { font-size: 8pt; font-weight: 900; color: #000; white-space: nowrap; }
   .print-bar { text-align: center; padding: 10px; font-family: Arial, sans-serif; }
   .print-bar p { font-size: 11px; color: #666; margin: 6px 0 0; }
   @media print { .print-bar { display: none; } }
@@ -155,8 +156,8 @@ function autofitLabels(minScale){
           ${komposisi.map(k => `<span class="komposisi-nama">${esc(k.nama)}</span><span class="komposisi-vol">: ${esc(k.volume)}</span>`).join('')}
         </div>
         <div class="bud-box">
-          ${totalVol ? `<span class="total-inline">Total Volume: <b>${esc(totalVol)}</b></span>` : ''}
-          <span class="bud-compact${totalVol ? '' : ' no-divider'}">BUD (EXP)${d.bud_durasi_jam ? ` (${esc(d.bud_durasi_jam)}j)` : ''}: ${esc(computeBud(d))}</span>
+          ${totalVol ? `<div class="bud-row"><span class="total-inline">Total Volume: <b>${esc(totalVol)}</b></span></div>` : ''}
+          <div class="bud-row"><span class="bud-compact">BUD (EXP)${d.bud_durasi_jam ? ` (${esc(d.bud_durasi_jam)}j)` : ''}: ${esc(computeBud(d))}</span></div>
         </div>
       </div>
     </div>
