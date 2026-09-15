@@ -3,7 +3,7 @@
    ============================================================ */
 
 let CURRENT_USER = null;
-let CACHE = { etiket: [], pasien: [], obat: [], pelarut: [], settings: {}, etiketTpn: [] };
+let CACHE = { etiket: [], pasien: [], obat: [], pelarut: [], settings: {}, etiketTpn: [], sediaanTpn: [] };
 let CURRENT_ROUTE = 'dashboard';
 let PREFILL_ENTRI = null; // dipakai saat "Gunakan" dari Daftar Pasien
 let PREFILL_TPN = null;   // sama seperti PREFILL_ENTRI, tapi untuk form Entri TPN
@@ -83,13 +83,14 @@ async function doLogout() {
 
 /* ---------------- DATA LOADING ---------------- */
 async function loadAllData() {
-  const [etiketRes, pasienRes, obatRes, pelarutRes, settingsRes, etiketTpnRes] = await Promise.all([
+  const [etiketRes, pasienRes, obatRes, pelarutRes, settingsRes, etiketTpnRes, sediaanTpnRes] = await Promise.all([
     supabase.from('etiket').select('*').order('created_at', { ascending: false }),
     supabase.from('pasien').select('*').order('nama_pasien', { ascending: true }),
     supabase.from('obat').select('*').order('nama_obat', { ascending: true }),
     supabase.from('pelarut').select('*').order('nama_pelarut', { ascending: true }),
     supabase.from('pengaturan').select('*'),
-    supabase.from('etiket_tpn').select('*').order('created_at', { ascending: false })
+    supabase.from('etiket_tpn').select('*').order('created_at', { ascending: false }),
+    supabase.from('sediaan_tpn').select('*').order('nama_sediaan', { ascending: true })
   ]);
   CACHE.etiket = etiketRes.data || [];
   CACHE.pasien = pasienRes.data || [];
@@ -98,6 +99,7 @@ async function loadAllData() {
   CACHE.settings = {};
   (settingsRes.data || []).forEach(r => CACHE.settings[r.key] = r.value);
   CACHE.etiketTpn = etiketTpnRes.data || [];
+  CACHE.sediaanTpn = sediaanTpnRes.data || [];
   document.getElementById('sbNamaRS').textContent = CACHE.settings.nama_rs || 'Etiket Kemo';
 }
 
@@ -110,6 +112,8 @@ const PAGES = {
   pelarut:    { title: 'Database Pelarut', sub: 'Daftar pelarut baku (NaCl 0,9%, D5%, dll)', render: renderPelarut },
   tpn_dashboard: { title: 'Daftar Etiket TPN', sub: 'Semua etiket TPN yang tersimpan',        render: renderTpnDashboard },
   tpn_entri:     { title: 'Entri TPN Baru',    sub: 'Tambah atau perbarui etiket TPN pasien', render: renderTpnEntri },
+  tpn_pasien:    { title: 'Daftar Pasien TPN', sub: 'Riwayat resep TPN tiap pasien',          render: renderTpnPasien },
+  tpn_sediaan:   { title: 'Database Sediaan TPN', sub: 'Nama sediaan & volume/satuan baku',   render: renderTpnSediaan },
   pengaturan: { title: 'Pengaturan',       sub: 'Identitas rumah sakit',                     render: renderPengaturan }
 };
 
@@ -1048,6 +1052,42 @@ function nextTpnId() {
   return candidate;
 }
 
+function defaultTanggalMulaiTpn() {
+  const d = new Date();
+  d.setHours(16, 0, 0, 0);
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().slice(0, 16);
+}
+
+function cariSediaanTpn(nama) {
+  if (!nama) return null;
+  const n = nama.trim().toLowerCase();
+  return CACHE.sediaanTpn.find(s => s.nama_sediaan.toLowerCase() === n) || null;
+}
+
+// Saat nama sediaan cocok dengan Database Sediaan TPN, Volume otomatis
+// diisi "volume_default satuan" (mis. "250 ml"). Kalau petugas mengubah
+// Volume secara manual (markVolumeManual), nilai itu tidak akan ditimpa
+// lagi oleh pengisian otomatis ini.
+function onSediaanTpnInput(uid) {
+  const namaInput = document.getElementById('tpnNama_' + uid);
+  const volInput = document.getElementById('tpnVolume_' + uid);
+  if (!namaInput || !volInput) return;
+  const sediaan = cariSediaanTpn(namaInput.value);
+  if (!sediaan) return;
+  if (!volInput.value || volInput.dataset.auto === '1') {
+    const parts = [];
+    if (sediaan.volume_default !== null && sediaan.volume_default !== undefined) parts.push(sediaan.volume_default);
+    if (sediaan.satuan) parts.push(sediaan.satuan);
+    volInput.value = parts.join(' ');
+    volInput.dataset.auto = '1';
+  }
+}
+function markVolumeManual(uid) {
+  const volInput = document.getElementById('tpnVolume_' + uid);
+  if (volInput) volInput.dataset.auto = '0';
+}
+
 /* ---------------- HALAMAN: DAFTAR ETIKET TPN ---------------- */
 function renderTpnDashboard(content) {
   const rows = CACHE.etiketTpn;
@@ -1225,7 +1265,7 @@ function renderTpnEntri(content) {
 
     <div class="card">
       <h2>Komposisi TPN</h2>
-      <p class="hint" style="margin-top:0;">Tiap baris akan tampil di etiket persis seperti ditulis, contoh: <b>D10% 250 ml</b>, <b>KCl 7,46% 12 ml</b>.</p>
+      <p class="hint" style="margin-top:0;">Tiap baris akan tampil di etiket persis seperti ditulis, contoh: <b>D10% 250 ml</b>, <b>KCl 7,46% 12 ml</b>. Ketik nama sediaan yang sudah ada di Database Sediaan TPN untuk mengisi Volume otomatis (tetap bisa diubah).</p>
       <div id="tpnKomposisiContainer"></div>
       <button class="btn secondary" type="button" onclick="tambahKomposisiItem()">➕ Tambah Sediaan</button>
     </div>
@@ -1234,6 +1274,7 @@ function renderTpnEntri(content) {
       <button class="btn" onclick="simpanTpnEntri()">💾 Simpan Etiket TPN</button>
       <button class="btn ghost" onclick="navigate('tpn_dashboard')">Batal</button>
     </div>
+    <datalist id="daftarSediaanTpnList">${CACHE.sediaanTpn.map(s => `<option value="${escapeHtml(s.nama_sediaan)}">`).join('')}</datalist>
   `;
 
   document.getElementById('tpnKomposisiContainer').dataset.editId = (prefill && prefill.editId) || '';
@@ -1243,12 +1284,12 @@ function renderTpnEntri(content) {
     document.getElementById('t_namaPasien').value = prefill.namaPasien || '';
     document.getElementById('t_tanggalLahir').value = prefill.tanggalLahir || '';
     document.getElementById('t_lokasi').value = prefill.lokasi || '';
-    document.getElementById('t_tanggalMulai').value = prefill.tanggalMulai || defaultTanggalMulai();
+    document.getElementById('t_tanggalMulai').value = prefill.tanggalMulai || defaultTanggalMulaiTpn();
     document.getElementById('t_budDurasi').value = prefill.budDurasi || 24;
     (prefill.komposisi || []).forEach(k => tambahKomposisiItem(k));
     if (!prefill.komposisi || !prefill.komposisi.length) tambahKomposisiItem();
   } else {
-    document.getElementById('t_tanggalMulai').value = defaultTanggalMulai();
+    document.getElementById('t_tanggalMulai').value = defaultTanggalMulaiTpn();
     tambahKomposisiItem();
   }
 }
@@ -1270,8 +1311,8 @@ function komposisiItemTemplate(uid) {
       <button type="button" class="btn ghost" style="padding:4px 10px;" onclick="hapusKomposisiItem(${uid})">🗑 Hapus</button>
     </div>
     <div class="row2">
-      <div><label>Nama Sediaan *</label><input type="text" id="tpnNama_${uid}" placeholder="D10%"></div>
-      <div><label>Volume *</label><input type="text" id="tpnVolume_${uid}" placeholder="250 ml"></div>
+      <div><label>Nama Sediaan (ketik untuk cari) *</label><input type="text" id="tpnNama_${uid}" list="daftarSediaanTpnList" placeholder="D10%" oninput="onSediaanTpnInput(${uid})"></div>
+      <div><label>Volume (otomatis, bisa diubah) *</label><input type="text" id="tpnVolume_${uid}" placeholder="250 ml" oninput="markVolumeManual(${uid})"></div>
     </div>
   </div>`;
 }
@@ -1282,7 +1323,9 @@ function tambahKomposisiItem(prefillItem) {
   document.getElementById('tpnKomposisiContainer').insertAdjacentHTML('beforeend', komposisiItemTemplate(uid));
   if (prefillItem) {
     document.getElementById('tpnNama_' + uid).value = prefillItem.nama || '';
-    document.getElementById('tpnVolume_' + uid).value = prefillItem.volume || '';
+    const volInput = document.getElementById('tpnVolume_' + uid);
+    volInput.value = prefillItem.volume || '';
+    volInput.dataset.auto = '0'; // nilai dari data tersimpan/riwayat dianggap sudah final, jangan ditimpa otomatis
   }
   renderKomposisiNumbers();
 }
@@ -1357,6 +1400,158 @@ async function simpanTpnEntri() {
   navigate('tpn_dashboard');
   const dash = document.getElementById('content');
   toast(dash, 'ok', editId ? 'Etiket TPN diperbarui.' : 'Etiket TPN baru tersimpan.');
+}
+
+/* ---------------- HALAMAN: DAFTAR PASIEN TPN ---------------- */
+// Terpisah dari "Daftar Pasien" milik onko: hanya menampilkan pasien yang
+// punya riwayat etiket_tpn, dipakai untuk mengedit/menggunakan-ulang
+// resep TPN sebelumnya.
+function getTpnHistoryForPasien(noRM) {
+  return CACHE.etiketTpn
+    .filter(r => r.no_rm === noRM)
+    .sort((a, b) => new Date(b.tanggal_dibuat || 0) - new Date(a.tanggal_dibuat || 0));
+}
+
+function renderTpnPasien(content) {
+  const map = {};
+  CACHE.etiketTpn.forEach(r => {
+    if (!map[r.no_rm]) map[r.no_rm] = { no_rm: r.no_rm, nama_pasien: r.nama_pasien, tanggal_lahir: r.tanggal_lahir };
+  });
+  const list = Object.values(map).map(p => {
+    const riwayat = getTpnHistoryForPasien(p.no_rm);
+    return { ...p, jumlahResep: riwayat.length, terakhir: riwayat[0] };
+  });
+  list.sort((a, b) => a.nama_pasien.localeCompare(b.nama_pasien, 'id'));
+
+  content.innerHTML = `
+    <div class="card">
+      <div class="toolbar">
+        <input type="text" id="searchPasienTpn" class="search-box" placeholder="Cari nama / No RM...">
+      </div>
+      <div style="overflow-x:auto;">
+        <table class="data-grid">
+          <thead><tr><th>Nama Pasien</th><th>No RM</th><th>Tgl Lahir</th><th>Jumlah Resep TPN</th><th>Resep Terakhir</th><th>Komposisi Terakhir</th><th></th></tr></thead>
+          <tbody id="pasienTpnTbody">
+            ${list.map(p => `
+              <tr data-search="${escapeHtml((p.nama_pasien+' '+p.no_rm).toLowerCase())}">
+                <td><b>${escapeHtml(p.nama_pasien)}</b></td>
+                <td class="rm-code">${escapeHtml(p.no_rm)}</td>
+                <td>${fmtDate(p.tanggal_lahir)}</td>
+                <td>${p.jumlahResep}</td>
+                <td>${p.terakhir ? fmtDateTime(p.terakhir.tanggal_dibuat) : '-'}</td>
+                <td>${p.terakhir ? escapeHtml(komposisiRingkas(p.terakhir)) : '-'}</td>
+                <td class="actions-cell">
+                  <button class="btn secondary" style="padding:5px 10px;" onclick="editTpn('${escapeHtml(p.terakhir.id)}')">✏️ Edit Resep Terakhir</button>
+                  <button class="btn ghost" style="padding:5px 10px;" onclick="gunakanPasienTpn('${escapeHtml(p.no_rm)}')">Gunakan (Resep Baru)</button>
+                  <button class="icon-btn danger" title="Hapus semua riwayat TPN pasien ini" onclick="hapusPasienTpnTotal('${escapeHtml(p.no_rm)}')">🗑️</button>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+  document.getElementById('searchPasienTpn').addEventListener('input', (e) => {
+    const q = e.target.value.toLowerCase().trim();
+    document.querySelectorAll('#pasienTpnTbody tr').forEach(tr => {
+      tr.style.display = tr.getAttribute('data-search').includes(q) ? '' : 'none';
+    });
+  });
+}
+
+// Prefill sebagai ETIKET BARU (bukan edit) memakai komposisi resep TPN
+// terakhir milik pasien tsb — dipakai saat resep diulang di kunjungan lain.
+function gunakanPasienTpn(noRM) {
+  const p = CACHE.pasien.find(x => x.no_rm === noRM);
+  const riwayat = getTpnHistoryForPasien(noRM);
+  const last = riwayat[0];
+  if (!last) return;
+  PREFILL_TPN = {
+    noRM,
+    namaPasien: (p && p.nama_pasien) || last.nama_pasien,
+    tanggalLahir: toISODateInput((p && p.tanggal_lahir) || last.tanggal_lahir),
+    lokasi: last.lokasi,
+    tanggalMulai: defaultTanggalMulaiTpn(),
+    budDurasi: last.bud_durasi_jam || 24,
+    komposisi: Array.isArray(last.komposisi) ? last.komposisi : []
+  };
+  navigate('tpn_entri');
+}
+
+// Hanya menghapus riwayat etiket_tpn milik pasien ini — TIDAK menyentuh
+// tabel "pasien" ataupun riwayat etiket onko pasien yang sama.
+async function hapusPasienTpnTotal(noRM) {
+  if (!confirm('Hapus SEMUA riwayat etiket TPN pasien ini? (Riwayat etiket kemoterapi pasien ini tidak akan terpengaruh.) Tindakan ini tidak bisa dibatalkan.')) return;
+  const { error } = await supabase.from('etiket_tpn').delete().eq('no_rm', noRM);
+  if (error) { alert('Gagal menghapus: ' + error.message); return; }
+  await loadAllData();
+  navigate('tpn_pasien');
+}
+
+/* ---------------- HALAMAN: DATABASE SEDIAAN TPN ---------------- */
+// Terpisah dari "Database Obat" milik onko. Kolom "satuan" otomatis
+// terisi "ml" saat sediaan baru ditambahkan, tapi tetap bisa diubah
+// manual (persis seperti kolom "satuan" pada Database Obat kemo).
+function renderTpnSediaan(content) {
+  content.innerHTML = `
+    <div class="card">
+      <h2>Tambah Sediaan TPN Baru</h2>
+      <div class="row3">
+        <div><label>Nama Sediaan</label><input type="text" id="sediaanNamaBaru" placeholder="D10%"></div>
+        <div><label>Volume Default</label><input type="number" id="sediaanVolBaru" step="0.01" placeholder="250"></div>
+        <div><label>Satuan</label><input type="text" id="sediaanSatuanBaru" value="ml"></div>
+      </div>
+      <button class="btn" style="margin-top:10px;" onclick="tambahSediaanTpn()">➕ Tambah</button>
+      <div id="sediaanTpnMsg"></div>
+    </div>
+    <div class="card">
+      <h2>Daftar Sediaan TPN (${CACHE.sediaanTpn.length})</h2>
+      <div style="overflow-x:auto;">
+        <table class="data-grid">
+          <thead><tr><th>Nama Sediaan</th><th>Volume Default</th><th>Satuan</th><th></th></tr></thead>
+          <tbody>
+            ${CACHE.sediaanTpn.map(s => `
+              <tr>
+                <td>${escapeHtml(s.nama_sediaan)}</td>
+                <td><input type="number" step="0.01" value="${s.volume_default ?? ''}" id="vd_${s.id}" style="width:100px;"></td>
+                <td><input type="text" value="${escapeHtml(s.satuan || '')}" id="sd_${s.id}" style="width:90px;"></td>
+                <td class="actions-cell">
+                  <button class="icon-btn" title="Simpan" onclick="updateSediaanTpn(${s.id})">💾</button>
+                  <button class="icon-btn danger" title="Hapus" onclick="hapusSediaanTpn(${s.id})">🗑️</button>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+async function tambahSediaanTpn() {
+  const nama = document.getElementById('sediaanNamaBaru').value.trim();
+  const vol = parseFloat(document.getElementById('sediaanVolBaru').value);
+  const satuan = document.getElementById('sediaanSatuanBaru').value.trim() || 'ml';
+  const msgBox = document.getElementById('sediaanTpnMsg');
+  if (!nama) { toast(msgBox, 'err', 'Nama sediaan wajib diisi.'); return; }
+  const { error } = await supabase.from('sediaan_tpn').insert({ nama_sediaan: nama, volume_default: isNaN(vol) ? null : vol, satuan });
+  if (error) { toast(msgBox, 'err', 'Gagal: ' + error.message); return; }
+  await loadAllData();
+  navigate('tpn_sediaan');
+}
+async function updateSediaanTpn(id) {
+  const vd = parseFloat(document.getElementById('vd_' + id).value);
+  const sd = document.getElementById('sd_' + id).value.trim() || 'ml';
+  await supabase.from('sediaan_tpn').update({ volume_default: isNaN(vd) ? null : vd, satuan: sd }).eq('id', id);
+  await loadAllData();
+  navigate('tpn_sediaan');
+}
+async function hapusSediaanTpn(id) {
+  if (!confirm('Hapus sediaan ini dari database?')) return;
+  await supabase.from('sediaan_tpn').delete().eq('id', id);
+  await loadAllData();
+  navigate('tpn_sediaan');
 }
 
 /* ============================================================
