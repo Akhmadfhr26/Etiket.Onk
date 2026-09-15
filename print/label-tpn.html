@@ -32,10 +32,13 @@
   .pasien-row { font-size: 11pt; font-weight: 900; line-height: 1.1; color: #000; overflow-wrap: break-word; word-break: break-word; }
   .lokasi-row { font-size: 8pt; font-weight: 800; line-height: 1.15; color: #000; overflow-wrap: break-word; word-break: break-word; margin-top: 0.2mm; }
 
-  /* Kotak komposisi: tiap sediaan tampil sebagai satu baris "Nama Volume"
-     (mis. "D10% 250 ml"), berurutan ke bawah, tanpa judul/header. */
-  .komposisi-box { border-top: 0.5mm solid #000; border-bottom: 0.5mm solid #000; padding: 0.6mm 1mm; margin-bottom: 0.2mm; flex-shrink: 0; }
-  .komposisi-line { font-size: 11.5pt; font-weight: 900; line-height: 1.28; color: #000; overflow-wrap: break-word; word-break: break-word; white-space: nowrap; }
+  /* Kotak komposisi: dibuat sebagai CSS grid 2 kolom (nama | : volume)
+     supaya titik dua & volume semua baris sejajar rapi, walau panjang
+     nama sediaan beda-beda (grid otomatis menyamakan lebar kolom nama
+     dengan nama sediaan terpanjang). */
+  .komposisi-box { border-top: 0.5mm solid #000; border-bottom: 0.5mm solid #000; padding: 0.6mm 1mm; margin-bottom: 0.2mm; flex-shrink: 0; display: grid; grid-template-columns: max-content max-content; column-gap: 1mm; row-gap: 0; }
+  .komposisi-nama, .komposisi-vol { font-size: 11.5pt; font-weight: 900; line-height: 1.28; color: #000; white-space: nowrap; }
+  .komposisi-nama { text-align: left; }
 
   .bud-box { border-top: 0.45mm solid #000; border-bottom: 0.45mm solid #000; padding: 0.3mm 1mm; display: flex; justify-content: space-between; align-items: baseline; gap: 1.5mm; margin-top: 0.3mm; flex-shrink: 0; }
   .bud-label, .bud-tanggal { font-size: 8.5pt; font-weight: 900; color: #000; white-space: nowrap; }
@@ -118,7 +121,7 @@ function autofitLabels(minScale){
           ${d.lokasi ? `<div class="lokasi-row">${esc(d.lokasi)}</div>` : ''}
         </div>
         <div class="komposisi-box">
-          ${komposisi.map(k => `<div class="komposisi-line">${esc(k.nama)}: ${esc(k.volume)}</div>`).join('')}
+          ${komposisi.map(k => `<span class="komposisi-nama">${esc(k.nama)}</span><span class="komposisi-vol">: ${esc(k.volume)}</span>`).join('')}
         </div>
         <div class="bud-box">
           <span class="bud-label">BUD (EXP)${d.bud_durasi_jam ? `: (${esc(d.bud_durasi_jam)}j)` : ''}</span>
