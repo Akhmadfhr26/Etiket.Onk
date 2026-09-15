@@ -118,7 +118,7 @@ function autofitLabels(minScale){
           ${d.lokasi ? `<div class="lokasi-row">${esc(d.lokasi)}</div>` : ''}
         </div>
         <div class="komposisi-box">
-          ${komposisi.map(k => `<div class="komposisi-line">${esc(k.nama)} ${esc(k.volume)}</div>`).join('')}
+          ${komposisi.map(k => `<div class="komposisi-line">${esc(k.nama)}: ${esc(k.volume)}</div>`).join('')}
         </div>
         <div class="bud-box">
           <span class="bud-label">BUD (EXP)${d.bud_durasi_jam ? `: (${esc(d.bud_durasi_jam)}j)` : ''}</span>
