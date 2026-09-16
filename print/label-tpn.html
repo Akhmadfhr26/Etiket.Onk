@@ -36,20 +36,19 @@
   /* Kotak komposisi: dibuat sebagai CSS grid 2 kolom (nama | : volume)
      supaya titik dua & volume semua baris sejajar rapi, walau panjang
      nama sediaan beda-beda (grid otomatis menyamakan lebar kolom nama
-     dengan nama sediaan terpanjang). */
-  .komposisi-box { border-top: 0.5mm solid #000; border-bottom: 0.5mm solid #000; padding: 0.6mm 1mm; margin-bottom: 0.2mm; flex-shrink: 0; display: grid; grid-template-columns: max-content max-content; column-gap: 1mm; row-gap: 0; }
-  .komposisi-nama, .komposisi-vol { font-size: 11.5pt; font-weight: 900; line-height: 1.28; color: #000; white-space: nowrap; }
+     dengan nama sediaan terpanjang). row-gap diberi jarak kecil supaya
+     antar baris sediaan tidak berhimpitan / lebih mudah dibaca. */
+  .komposisi-box { border-top: 0.5mm solid #000; border-bottom: 0.35mm dashed #000; padding: 0.7mm 1mm; margin-bottom: 0.3mm; flex-shrink: 0; display: grid; grid-template-columns: max-content max-content; column-gap: 1.5mm; row-gap: 0.5mm; align-items: baseline; }
+  .komposisi-nama, .komposisi-vol { font-size: 11pt; font-weight: 900; line-height: 1.15; color: #000; white-space: nowrap; }
   .komposisi-nama { text-align: left; }
 
-  /* Total Volume & BUD sekarang ditampilkan pada baris terpisah (vertikal),
-     bukan lagi sebaris. Tetap dalam satu kotak yang dipisah garis
-     putus-putus dari kotak komposisi di atasnya. */
-  .bud-box { border-top: 0.35mm dashed #000; border-bottom: 0.45mm solid #000; padding: 0.35mm 1mm; display: block; margin-top: 0.3mm; flex-shrink: 0; }
-  .bud-row { display: block; line-height: 1.2; }
-  .bud-row + .bud-row { margin-top: 0.3mm; }
-  .total-inline { font-size: 7.5pt; font-weight: 800; color: #000; white-space: nowrap; }
-  .total-inline b { font-weight: 900; }
-  .bud-compact { font-size: 8pt; font-weight: 900; color: #000; white-space: nowrap; }
+  /* Total Volume dibuat baris kecil TERPISAH dari BUD (bukan sebaris),
+     supaya BUD tetap jelas terbaca dan tidak berdesakan. */
+  .total-row { font-size: 6.8pt; font-weight: 800; color: #000; margin: 0 0 0.2mm; flex-shrink: 0; line-height: 1.1; }
+  .total-row b { font-weight: 900; font-size: 7.3pt; }
+
+  .bud-box { border-top: 0.45mm solid #000; border-bottom: 0.45mm solid #000; padding: 0.3mm 1mm; display: flex; justify-content: space-between; align-items: baseline; gap: 1.5mm; flex-shrink: 0; }
+  .bud-label, .bud-tanggal { font-size: 8.5pt; font-weight: 900; color: #000; white-space: nowrap; }
   .print-bar { text-align: center; padding: 10px; font-family: Arial, sans-serif; }
   .print-bar p { font-size: 11px; color: #666; margin: 6px 0 0; }
   @media print { .print-bar { display: none; } }
@@ -155,9 +154,10 @@ function autofitLabels(minScale){
         <div class="komposisi-box">
           ${komposisi.map(k => `<span class="komposisi-nama">${esc(k.nama)}</span><span class="komposisi-vol">: ${esc(k.volume)}</span>`).join('')}
         </div>
+        ${totalVol ? `<div class="total-row">Total Volume: <b>${esc(totalVol)}</b></div>` : ''}
         <div class="bud-box">
-          ${totalVol ? `<div class="bud-row"><span class="total-inline">Total Volume: <b>${esc(totalVol)}</b></span></div>` : ''}
-          <div class="bud-row"><span class="bud-compact">BUD (EXP)${d.bud_durasi_jam ? ` (${esc(d.bud_durasi_jam)}j)` : ''}: ${esc(computeBud(d))}</span></div>
+          <span class="bud-label">BUD (EXP)${d.bud_durasi_jam ? `: (${esc(d.bud_durasi_jam)}j)` : ''}</span>
+          <span class="bud-tanggal">${esc(computeBud(d))}</span>
         </div>
       </div>
     </div>
