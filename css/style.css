@@ -218,3 +218,8 @@ table.data-grid tr:hover td{background:rgba(16,185,129,.045);}
 .chip-row{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;}
 .chip{border:1px solid var(--border);background:#fff;border-radius:999px;padding:5px 12px;font-size:12px;cursor:pointer;font-weight:600;}
 .chip.active{background:var(--accent);color:#fff;border-color:var(--accent);}
+
+/* ---------- Etiket Obat item (kartu tambahan di halaman Entri) ---------- */
+.obat-label-item{
+  border:1px dashed var(--border);border-radius:var(--radius);padding:14px;margin-bottom:14px;background:var(--bg);
+}
