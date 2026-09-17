@@ -30,14 +30,15 @@
   .pasien-sub { font-size: 7.8pt; font-weight: 700; line-height: 1.2; color: #000; margin-top: 0.2mm; overflow-wrap: break-word; word-break: break-word; }
 
   .obat-box { border-top: 0.5mm solid #000; border-bottom: 0.5mm solid #000; padding: 0.6mm 1mm; margin-top: 0.4mm; flex-shrink: 0; }
+  .obat-line { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0 1.5mm; }
   .obat-nama { font-size: 12.5pt; font-weight: 900; line-height: 1.15; color: #000; overflow-wrap: break-word; word-break: break-word; }
-  .obat-dosis { font-size: 10pt; font-weight: 800; color: #000; margin-top: 0.3mm; overflow-wrap: break-word; word-break: break-word; }
+  .obat-dosis { font-size: 10pt; font-weight: 800; color: #000; overflow-wrap: break-word; word-break: break-word; }
 
   .aturan-row { margin-top: 0.5mm; padding: 0.6mm 1mm; border: 0.4mm solid #000; border-radius: 1mm; flex-shrink: 0; }
   .aturan-label { font-size: 7.3pt; font-weight: 800; color: #000; display: block; letter-spacing: .03em; }
   .aturan-value { font-size: 11.5pt; font-weight: 900; line-height: 1.15; color: #000; overflow-wrap: break-word; word-break: break-word; }
 
-  .waktu-banner { margin-top: 0.5mm; background: #000; color: #fff; text-align: center; padding: 0.7mm 1mm; border-radius: 1mm; font-size: 9.5pt; font-weight: 900; letter-spacing: .03em; flex-shrink: 0; }
+  .waktu-banner { margin-top: 0.5mm; background: #000; color: #fff; text-align: center; padding: 0.7mm 1mm; border-radius: 1mm; font-size: 9.5pt; font-weight: 400; letter-spacing: .03em; flex-shrink: 0; }
 
   .print-bar { text-align: center; padding: 10px; font-family: Arial, sans-serif; }
   .print-bar p { font-size: 11px; color: #666; margin: 6px 0 0; }
@@ -114,8 +115,10 @@ function autofitLabels(minScale){
           <div class="pasien-sub">No.RM ${esc(d.no_rm)} &nbsp;|&nbsp; Lahir: ${esc(String(d.tanggal_lahir||'').split('T')[0] || '-')}</div>
         </div>
         <div class="obat-box">
-          <div class="obat-nama">${esc(d.nama_obat)}</div>
-          <div class="obat-dosis">${esc(d.dosis_obat)}</div>
+          <div class="obat-line">
+            <span class="obat-nama">${esc(d.nama_obat)}</span>
+            <span class="obat-dosis">${esc(d.dosis_obat)}</span>
+          </div>
         </div>
         <div class="aturan-row">
           <span class="aturan-label">ATURAN PAKAI</span>
