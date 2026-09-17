@@ -3,7 +3,7 @@
    ============================================================ */
 
 let CURRENT_USER = null;
-let CACHE = { etiket: [], pasien: [], obat: [], pelarut: [], settings: {}, etiketTpn: [], sediaanTpn: [] };
+let CACHE = { etiket: [], pasien: [], obat: [], pelarut: [], settings: {}, etiketTpn: [], sediaanTpn: [], etiketObat: [] };
 let CURRENT_ROUTE = 'dashboard';
 let PREFILL_ENTRI = null; // dipakai saat "Gunakan" dari Daftar Pasien
 let PREFILL_TPN = null;   // sama seperti PREFILL_ENTRI, tapi untuk form Entri TPN
@@ -83,14 +83,15 @@ async function doLogout() {
 
 /* ---------------- DATA LOADING ---------------- */
 async function loadAllData() {
-  const [etiketRes, pasienRes, obatRes, pelarutRes, settingsRes, etiketTpnRes, sediaanTpnRes] = await Promise.all([
+  const [etiketRes, pasienRes, obatRes, pelarutRes, settingsRes, etiketTpnRes, sediaanTpnRes, etiketObatRes] = await Promise.all([
     supabase.from('etiket').select('*').order('created_at', { ascending: false }),
     supabase.from('pasien').select('*').order('nama_pasien', { ascending: true }),
     supabase.from('obat').select('*').order('nama_obat', { ascending: true }),
     supabase.from('pelarut').select('*').order('nama_pelarut', { ascending: true }),
     supabase.from('pengaturan').select('*'),
     supabase.from('etiket_tpn').select('*').order('created_at', { ascending: false }),
-    supabase.from('sediaan_tpn').select('*').order('nama_sediaan', { ascending: true })
+    supabase.from('sediaan_tpn').select('*').order('nama_sediaan', { ascending: true }),
+    supabase.from('etiket_obat').select('*').order('created_at', { ascending: false })
   ]);
   CACHE.etiket = etiketRes.data || [];
   CACHE.pasien = pasienRes.data || [];
@@ -100,6 +101,7 @@ async function loadAllData() {
   (settingsRes.data || []).forEach(r => CACHE.settings[r.key] = r.value);
   CACHE.etiketTpn = etiketTpnRes.data || [];
   CACHE.sediaanTpn = sediaanTpnRes.data || [];
+  CACHE.etiketObat = etiketObatRes.data || [];
   document.getElementById('sbNamaRS').textContent = CACHE.settings.nama_rs || 'Etiket Kemo';
 }
 
@@ -211,20 +213,26 @@ function renderDashboard(content) {
       <div class="stat-box"><div class="num">${Array.from(new Set(rows.map(r=>r.batch_id).filter(Boolean))).length}</div><div class="lab">Total Kunjungan (Batch)</div></div>
     </div>
     <div class="card">
+      <div class="chip-row" id="jenisEtiketTabs">
+        <span class="chip active" data-j="kemo" onclick="setJenisEtiket('kemo')">🧪 Etiket Kemo (Infus)</span>
+        <span class="chip" data-j="obat" onclick="setJenisEtiket('obat')">💊 Etiket Obat</span>
+      </div>
       <div class="toolbar">
         <input type="text" id="searchEtiket" class="search-box" placeholder="Cari nama pasien / No RM / obat...">
         <div class="spacer"></div>
         <button class="btn secondary" onclick="navigate('entri')">➕ Entri Baru</button>
-        <button class="btn" onclick="cetakTerpilih('label')">🏷️ Cetak Label Obat</button>
-        <button class="btn" onclick="cetakTerpilih('identitas')">🪪 Cetak Label Identitas</button>
-        <button class="btn danger" onclick="hapusTerpilih()">🗑️ Hapus Terpilih</button>
+        <button class="btn" id="btnCetakLabelKemo" onclick="cetakTerpilih('label')">🏷️ Cetak Label Obat</button>
+        <button class="btn" id="btnCetakIdentitasKemo" onclick="cetakTerpilih('identitas')">🪪 Cetak Label Identitas</button>
+        <button class="btn hidden" id="btnCetakObat" onclick="cetakTerpilihObat()">💊 Cetak Etiket Obat</button>
+        <button class="btn danger" id="btnHapusKemo" onclick="hapusTerpilih()">🗑️ Hapus Terpilih</button>
+        <button class="btn danger hidden" id="btnHapusObat" onclick="hapusTerpilihObat()">🗑️ Hapus Terpilih</button>
       </div>
       <div class="chip-row" id="dateChips">
         <span class="chip active" data-d="" onclick="filterByDate('')">Semua Tanggal</span>
         ${dateSet.map(d => `<span class="chip" data-d="${d}" onclick="filterByDate('${d}')">${fmtDate(d)}</span>`).join('')}
       </div>
 
-      <div class="toolbar" style="margin-top:10px;flex-wrap:wrap;gap:10px;">
+      <div class="toolbar" id="rowDatePicker" style="margin-top:10px;flex-wrap:wrap;gap:10px;">
         <label style="font-size:12.5px;display:flex;align-items:center;gap:6px;">
           📅 Pilih Tanggal:
           <input type="date" id="datePickerFilter" onchange="filterByDatePickerValue(this.value)" style="width:auto;max-width:170px;">
@@ -245,18 +253,7 @@ function renderDashboard(content) {
 
       <div style="overflow-x:auto;">
         <table class="data-grid" id="etiketTable">
-          <thead>
-            <tr>
-              <th class="checkbox-cell"><input type="checkbox" onclick="toggleAllRows(this)"></th>
-              <th>Pasien / No RM</th>
-              <th>Obat &amp; Dosis</th>
-              <th>Hari Ke</th>
-              <th>Tanggal Dibuat</th>
-              <th>BUD (EXP)</th>
-              <th>Petugas</th>
-              <th></th>
-            </tr>
-          </thead>
+          <thead id="etiketThead"></thead>
           <tbody id="etiketTbody"></tbody>
         </table>
       </div>
@@ -264,7 +261,95 @@ function renderDashboard(content) {
   `;
   document.getElementById('searchEtiket').addEventListener('input', renderEtiketRows);
   window._activeDateFilter = '';
+  window._activeJenisEtiket = 'kemo';
+  renderEtiketTheadAndButtons();
   renderEtiketRows();
+}
+
+/* ---------------- TOGGLE JENIS ETIKET: KEMO / OBAT ---------------- */
+// Dashboard "Daftar Etiket" ini menampilkan 2 jenis data dari 2 tabel
+// berbeda (etiket kemo & etiket_obat) di 1 halaman yang sama, tanpa
+// menambah menu sidebar baru. Yang berubah hanya isi tabel & tombol aksi;
+// tidak menyentuh logic etiket kemo yang sudah ada.
+function setJenisEtiket(jenis) {
+  window._activeJenisEtiket = jenis;
+  document.querySelectorAll('#jenisEtiketTabs .chip').forEach(c => c.classList.toggle('active', c.getAttribute('data-j') === jenis));
+  renderEtiketTheadAndButtons();
+  renderEtiketRows();
+}
+
+function renderEtiketTheadAndButtons() {
+  const jenis = window._activeJenisEtiket || 'kemo';
+  const isObat = jenis === 'obat';
+  document.getElementById('etiketThead').innerHTML = isObat ? `
+    <tr>
+      <th class="checkbox-cell"><input type="checkbox" onclick="toggleAllRowsAny(this)"></th>
+      <th>Pasien / No RM</th>
+      <th>Nama &amp; Dosis Obat</th>
+      <th>Aturan Pakai</th>
+      <th>Waktu Makan</th>
+      <th>Tanggal Dibuat</th>
+      <th>Petugas</th>
+      <th></th>
+    </tr>` : `
+    <tr>
+      <th class="checkbox-cell"><input type="checkbox" onclick="toggleAllRowsAny(this)"></th>
+      <th>Pasien / No RM</th>
+      <th>Obat &amp; Dosis</th>
+      <th>Hari Ke</th>
+      <th>Tanggal Dibuat</th>
+      <th>BUD (EXP)</th>
+      <th>Petugas</th>
+      <th></th>
+    </tr>`;
+  document.getElementById('btnCetakLabelKemo').classList.toggle('hidden', isObat);
+  document.getElementById('btnCetakIdentitasKemo').classList.toggle('hidden', isObat);
+  document.getElementById('btnHapusKemo').classList.toggle('hidden', isObat);
+  document.getElementById('btnCetakObat').classList.toggle('hidden', !isObat);
+  document.getElementById('btnHapusObat').classList.toggle('hidden', !isObat);
+  // Filter tanggal & checklist per-pasien di bawah ini dipakai khusus etiket kemo
+  document.getElementById('dateChips').classList.toggle('hidden', isObat);
+  document.getElementById('rowDatePicker').classList.toggle('hidden', isObat);
+  document.getElementById('patientChecklistBox').classList.toggle('hidden', true); // selalu tutup saat ganti tab
+}
+
+function waktuMakanLabel(v) {
+  if (v === 'sebelum') return 'Sebelum Makan';
+  if (v === 'sesudah') return 'Sesudah Makan';
+  if (v === 'bebas') return 'Boleh Kapan Saja';
+  return '-';
+}
+
+function toggleAllRowsAny(cb) {
+  const sel = (window._activeJenisEtiket === 'obat') ? '.row-check-obat' : '.row-check';
+  document.querySelectorAll(sel).forEach(c => c.checked = cb.checked);
+}
+function getCheckedIdsObat() {
+  return Array.from(document.querySelectorAll('.row-check-obat:checked')).map(c => c.value);
+}
+
+function cetakTerpilihObat() {
+  const ids = getCheckedIdsObat();
+  if (!ids.length) { alert('Pilih minimal satu etiket obat dulu (centang di tabel).'); return; }
+  window.open('print/label-obat.html?ids=' + encodeURIComponent(ids.join(',')), '_blank');
+}
+
+async function hapusTerpilihObat() {
+  const ids = getCheckedIdsObat();
+  if (!ids.length) { alert('Pilih minimal satu etiket obat dulu.'); return; }
+  if (!confirm('Hapus ' + ids.length + ' etiket obat terpilih? Tindakan ini tidak bisa dibatalkan.')) return;
+  const { error } = await supabase.from('etiket_obat').delete().in('id', ids);
+  if (error) { alert('Gagal menghapus: ' + error.message); return; }
+  await loadAllData();
+  navigate('dashboard');
+}
+
+async function hapusSatuEtiketObat(id) {
+  if (!confirm('Hapus etiket obat ini?')) return;
+  const { error } = await supabase.from('etiket_obat').delete().eq('id', id);
+  if (error) { alert('Gagal menghapus: ' + error.message); return; }
+  await loadAllData();
+  navigate('dashboard');
 }
 
 function filterByDate(d) {
@@ -358,13 +443,40 @@ function centangSemuaPasien(state) {
 
 function renderEtiketRows() {
   const q = (document.getElementById('searchEtiket')?.value || '').toLowerCase().trim();
+  const tbody = document.getElementById('etiketTbody');
+
+  if ((window._activeJenisEtiket || 'kemo') === 'obat') {
+    const rowsObat = CACHE.etiketObat.filter(r => {
+      if (!q) return true;
+      return [r.nama_pasien, r.no_rm, r.nama_obat, r.dosis_obat, r.aturan_pakai].some(v => String(v || '').toLowerCase().includes(q));
+    });
+    if (!rowsObat.length) {
+      tbody.innerHTML = `<tr><td colspan="8" class="muted" style="text-align:center;padding:24px;">Tidak ada data.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = rowsObat.map(r => `
+      <tr>
+        <td class="checkbox-cell"><input type="checkbox" class="row-check-obat" value="${r.id}" data-norm="${escapeHtml(r.no_rm)}"></td>
+        <td><b>${escapeHtml(r.nama_pasien)}</b><br><span class="muted rm-code">${escapeHtml(r.no_rm)}</span></td>
+        <td><b>${escapeHtml(r.nama_obat)}</b><br><span class="muted">${escapeHtml(r.dosis_obat || '')}</span></td>
+        <td>${escapeHtml(r.aturan_pakai || '')}</td>
+        <td>${escapeHtml(waktuMakanLabel(r.waktu_makan))}</td>
+        <td>${fmtDateTime(r.created_at)}</td>
+        <td>${escapeHtml(r.petugas || '')}</td>
+        <td class="actions-cell">
+          <button class="icon-btn danger" title="Hapus" onclick="hapusSatuEtiketObat('${r.id}')">🗑️</button>
+        </td>
+      </tr>
+    `).join('');
+    return;
+  }
+
   const dateFilter = window._activeDateFilter || '';
   const rows = CACHE.etiket.filter(r => {
     if (dateFilter && toISODateInput(r.tanggal_dibuat) !== dateFilter) return false;
     if (!q) return true;
     return [r.nama_pasien, r.no_rm, r.obat_dosis, r.nama_obat].some(v => String(v || '').toLowerCase().includes(q));
   });
-  const tbody = document.getElementById('etiketTbody');
   if (!rows.length) {
     tbody.innerHTML = `<tr><td colspan="8" class="muted" style="text-align:center;padding:24px;">Tidak ada data.</td></tr>`;
     return;
@@ -441,12 +553,19 @@ function expandEtiketRowToItems(row) {
 function editEtiket(id) {
   const row = CACHE.etiket.find(r => r.id === id);
   if (!row) return;
+  const obatItems = row.batch_id
+    ? CACHE.etiketObat.filter(o => o.batch_id === row.batch_id).map(o => ({
+        dbid: o.id, obatNama: o.nama_obat, dosisObat: o.dosis_obat,
+        aturanPakai: o.aturan_pakai, waktuMakan: o.waktu_makan
+      }))
+    : [];
   PREFILL_ENTRI = {
     editId: row.id,
     namaPasien: row.nama_pasien, noRM: row.no_rm, tanggalLahir: toISODateInput(row.tanggal_lahir),
     lokasi: row.lokasi,
     tanggalMulai: row.tanggal_dibuat ? new Date(row.tanggal_dibuat).toISOString().slice(0,16) : '',
-    items: expandEtiketRowToItems(row)
+    items: expandEtiketRowToItems(row),
+    obatItems
   };
   navigate('entri');
 }
@@ -455,11 +574,13 @@ function editEtiket(id) {
    HALAMAN: ENTRI DATA BARU
    ============================================================ */
 let itemUid = 0;
+let obatItemUid = 0; // uid terpisah untuk item "Etiket Obat" (di bawah), tidak berbagi hitungan dgn regimen
 
 function renderEntri(content) {
   const prefill = PREFILL_ENTRI;
   PREFILL_ENTRI = null;
   itemUid = 0;
+  obatItemUid = 0;
 
   content.innerHTML = `
     <div id="entriMsg"></div>
@@ -500,12 +621,22 @@ function renderEntri(content) {
     </div>
 
     <div class="card">
+      <h2>💊 Etiket Obat <span class="muted" style="font-weight:500;font-size:12.5px;">(opsional)</span></h2>
+      <p class="hint" style="margin:0 0 10px;">Isi bagian ini kalau pasien juga perlu etiket untuk obat lain (bukan obat infus kemo di atas) — mis. obat oral pulang. Identitas pasien memakai data yang sudah diisi di kartu "Data Pasien".</p>
+      <div id="obatLabelContainer"></div>
+      <button class="btn secondary" type="button" onclick="tambahObatLabelItem()">➕ Tambah Obat</button>
+    </div>
+
+    <div class="card">
       <button class="btn" onclick="simpanEntriBatch()">💾 Simpan Semua</button>
       <button class="btn ghost" onclick="navigate('dashboard')">Batal</button>
     </div>
     <datalist id="daftarObatList">${CACHE.obat.map(o => `<option value="${escapeHtml(o.nama_obat)}">`).join('')}</datalist>
     <datalist id="daftarPelarutList">${CACHE.pelarut.map(p => `<option value="${escapeHtml(p.nama_pelarut)}">`).join('')}</datalist>
   `;
+
+  const obatLabelContainer = document.getElementById('obatLabelContainer');
+  obatLabelContainer.dataset.originalIds = '[]';
 
   if (prefill) {
     document.getElementById('f_noRM').value = prefill.noRM || '';
@@ -517,10 +648,64 @@ function renderEntri(content) {
     (prefill.items || []).forEach(it => tambahRegimenItem(it));
     if (!prefill.items || !prefill.items.length) tambahRegimenItem();
     if (prefill.noRM) tampilkanRiwayat(prefill.noRM, /*silent*/true);
+    (prefill.obatItems || []).forEach(it => tambahObatLabelItem(it));
+    obatLabelContainer.dataset.originalIds = JSON.stringify((prefill.obatItems || []).map(o => o.dbid).filter(Boolean));
   } else {
     document.getElementById('f_tanggalMulai').value = defaultTanggalMulai();
     tambahRegimenItem();
   }
+}
+
+/* ============================================================
+   BAGIAN: ETIKET OBAT (melekat di halaman Entri yang sama)
+   ============================================================ */
+function obatLabelItemTemplate(uid) {
+  return `
+  <div class="obat-label-item" id="obatItem_${uid}" data-uid="${uid}">
+    <div class="item-head">
+      <span class="item-title"><span class="item-badge item-num-obat"></span>Obat</span>
+      <button type="button" class="btn ghost" style="padding:4px 10px;" onclick="hapusObatLabelItem(${uid})">🗑 Hapus</button>
+    </div>
+    <label>Nama Obat *</label>
+    <input type="text" id="obatLabelNama_${uid}" list="daftarObatList" placeholder="mis. Ondansetron Tablet">
+    <div class="row2">
+      <div><label>Dosis Obat *</label><input type="text" id="obatLabelDosis_${uid}" placeholder="mis. 8 mg"></div>
+      <div><label>Aturan Pakai *</label><input type="text" id="obatLabelAturan_${uid}" placeholder="mis. 3 x 1 tablet"></div>
+    </div>
+    <label>Keterangan Waktu</label>
+    <select id="obatLabelWaktu_${uid}">
+      <option value="">— Tanpa keterangan —</option>
+      <option value="sebelum">Sebelum Makan</option>
+      <option value="sesudah">Sesudah Makan</option>
+      <option value="bebas">Boleh Kapan Saja</option>
+    </select>
+  </div>`;
+}
+
+function tambahObatLabelItem(prefillItem) {
+  obatItemUid += 1;
+  const uid = obatItemUid;
+  document.getElementById('obatLabelContainer').insertAdjacentHTML('beforeend', obatLabelItemTemplate(uid));
+  if (prefillItem) {
+    document.getElementById('obatLabelNama_' + uid).value = prefillItem.obatNama || '';
+    document.getElementById('obatLabelDosis_' + uid).value = prefillItem.dosisObat || '';
+    document.getElementById('obatLabelAturan_' + uid).value = prefillItem.aturanPakai || '';
+    document.getElementById('obatLabelWaktu_' + uid).value = prefillItem.waktuMakan || '';
+    if (prefillItem.dbid) document.getElementById('obatItem_' + uid).dataset.dbid = prefillItem.dbid;
+  }
+  renderObatItemNumbers();
+}
+
+function hapusObatLabelItem(uid) {
+  document.getElementById('obatItem_' + uid)?.remove();
+  renderObatItemNumbers();
+}
+
+function renderObatItemNumbers() {
+  document.querySelectorAll('.obat-label-item').forEach((el, idx) => {
+    const badge = el.querySelector('.item-num-obat');
+    if (badge) badge.textContent = idx + 1;
+  });
 }
 
 /* PERBAIKAN: default jam untuk field "Tanggal & Jam Kemoterapi (Hari ke-1)"
@@ -954,10 +1139,53 @@ async function simpanEntriBatch() {
     }
   }
 
+  // ---- Simpan Etiket Obat (opsional, melekat pada data pasien yang sama di atas) ----
+  const obatLabelContainer = document.getElementById('obatLabelContainer');
+  const originalObatIds = JSON.parse(obatLabelContainer?.dataset.originalIds || '[]');
+  const obatEls = Array.from(document.querySelectorAll('.obat-label-item'));
+  const keptObatIds = [];
+  let obatInserted = 0, obatUpdated = 0;
+
+  for (let i = 0; i < obatEls.length; i++) {
+    const uid = obatEls[i].getAttribute('data-uid');
+    const namaObatLabel = document.getElementById('obatLabelNama_' + uid).value.trim();
+    const dosisObatLabel = document.getElementById('obatLabelDosis_' + uid).value.trim();
+    const aturanPakai = document.getElementById('obatLabelAturan_' + uid).value.trim();
+    const waktuMakan = document.getElementById('obatLabelWaktu_' + uid).value;
+    if (!namaObatLabel || !dosisObatLabel || !aturanPakai) {
+      toast(msgBox, 'err', 'Etiket Obat #' + (i + 1) + ': Nama Obat, Dosis Obat, dan Aturan Pakai wajib diisi.');
+      return;
+    }
+    const dbid = obatEls[i].dataset.dbid || '';
+    const payloadObat = {
+      nama_pasien: namaPasien, no_rm: noRM, tanggal_lahir: tanggalLahir,
+      nama_obat: namaObatLabel, dosis_obat: dosisObatLabel, aturan_pakai: aturanPakai,
+      waktu_makan: waktuMakan || null, batch_id: batchId
+    };
+    if (dbid) {
+      const { error } = await supabase.from('etiket_obat').update(payloadObat).eq('id', dbid);
+      if (error) { toast(msgBox, 'err', 'Gagal menyimpan Etiket Obat #' + (i + 1) + ': ' + error.message); return; }
+      keptObatIds.push(String(dbid));
+      obatUpdated++;
+    } else {
+      const { data: insertedRow, error } = await supabase.from('etiket_obat').insert(payloadObat).select().single();
+      if (error) { toast(msgBox, 'err', 'Gagal menyimpan Etiket Obat #' + (i + 1) + ': ' + error.message); return; }
+      if (insertedRow) keptObatIds.push(String(insertedRow.id));
+      obatInserted++;
+    }
+  }
+  // Baris Etiket Obat lama (dari mode edit) yang barisnya sudah dihapus petugas di form ini, ikut dihapus dari database.
+  const obatIdsToDelete = originalObatIds.map(String).filter(id => !keptObatIds.includes(id));
+  if (obatIdsToDelete.length) {
+    await supabase.from('etiket_obat').delete().in('id', obatIdsToDelete);
+  }
+
   await loadAllData();
   navigate('dashboard');
   const dash = document.getElementById('content');
-  toast(dash, 'ok', `Tersimpan. ${inserted} etiket baru, ${overwritten} etiket diperbarui (ditimpa).`);
+  let pesan = `Tersimpan. ${inserted} etiket baru, ${overwritten} etiket diperbarui (ditimpa).`;
+  if (obatInserted || obatUpdated) pesan += ` Etiket Obat: ${obatInserted} baru, ${obatUpdated} diperbarui.`;
+  toast(dash, 'ok', pesan);
 }
 
 /* ============================================================
