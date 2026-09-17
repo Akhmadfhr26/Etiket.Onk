@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<title>Etiket Obat</title>
+<style>
+  @page { size: 60mm 40mm; margin: 0; }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    font-family: Tahoma, Verdana, "Segoe UI", Arial, Helvetica, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+
+  .label {
+    width: 60mm; height: 40mm;
+    padding: 1mm 1.3mm 1.5mm 1.3mm;
+    border-top: 0.5mm solid #000; border-bottom: 0.5mm solid #000;
+    page-break-after: always;
+    overflow: hidden;
+    position: relative;
+  }
+  .label:last-child { page-break-after: auto; }
+
+  .fit-content { display: flex; flex-direction: column; justify-content: flex-start; width: 100%; transform-origin: top left; }
+
+  .pasien-block { margin-bottom: 0.4mm; flex-shrink: 0; padding-bottom: 0.4mm; border-bottom: 0.4mm solid #000; }
+  .pasien-row { font-size: 11pt; font-weight: 900; line-height: 1.1; color: #000; overflow-wrap: break-word; word-break: break-word; }
+
+  .obat-box { border-top: 0.5mm solid #000; border-bottom: 0.5mm solid #000; padding: 0.6mm 1mm; margin-top: 0.4mm; flex-shrink: 0; }
+  .obat-nama { font-size: 12.5pt; font-weight: 900; line-height: 1.15; color: #000; overflow-wrap: break-word; word-break: break-word; }
+  .obat-dosis { font-size: 10pt; font-weight: 800; color: #000; margin-top: 0.3mm; overflow-wrap: break-word; word-break: break-word; }
+
+  .aturan-row { margin-top: 0.4mm; padding-top: 0.4mm; border-top: 0.3mm dashed #000; flex-shrink: 0; }
+  .aturan-label { font-size: 7.5pt; font-weight: 800; color: #000; display: block; }
+  .aturan-value { font-size: 11pt; font-weight: 900; line-height: 1.15; color: #000; overflow-wrap: break-word; word-break: break-word; }
+
+  .waktu-box { margin-top: 0.6mm; display: flex; justify-content: center; flex-shrink: 0; }
+  .waktu-badge { display: inline-block; border: 0.4mm solid #000; border-radius: 2mm; padding: 0.6mm 3mm; font-size: 9pt; font-weight: 900; letter-spacing: .02em; color: #000; }
+
+  .print-bar { text-align: center; padding: 10px; font-family: Arial, sans-serif; }
+  .print-bar p { font-size: 11px; color: #666; margin: 6px 0 0; }
+  @media print { .print-bar { display: none; } }
+</style>
+</head>
+<body>
+<div class="print-bar">
+  <button onclick="window.print()">🖨️ Cetak (Ctrl/Cmd+P)</button>
+  <p>Untuk simpan sebagai PDF: pilih <b>Destination → Save as PDF</b>. Ukuran halaman sudah otomatis 60×40mm.</p>
+</div>
+<div id="labelsRoot"><p style="font-family:Arial;padding:20px;">Memuat data...</p></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../js/supabaseClient.js"></script>
+<script>
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function fmtDateTime(d){ if(!d) return ''; const dt=new Date(d); if(isNaN(dt.getTime())) return String(d);
+  return dt.toLocaleDateString('id-ID')+' '+dt.toLocaleTimeString('id-ID',{hour:'2-digit',minute:'2-digit'}); }
+function waktuLabel(v){
+  if (v === 'sebelum') return 'SEBELUM MAKAN';
+  if (v === 'sesudah') return 'SESUDAH MAKAN';
+  if (v === 'bebas') return 'BOLEH KAPAN SAJA';
+  return '';
+}
+
+// Mengecilkan (scale) konten sebuah label bila kontennya lebih panjang dari tinggi
+// fisik label (40mm), sehingga tidak ada baris yang terpotong saat dicetak.
+function autofitLabels(minScale){
+  minScale = minScale || 0.55;
+  document.querySelectorAll('.label').forEach(label => {
+    const content = label.querySelector('.fit-content');
+    if (!content) return;
+    content.style.transform = 'none';
+    content.style.width = '100%';
+    void content.offsetHeight; // paksa reflow sebelum diukur
+    const cs = getComputedStyle(label);
+    const availH = label.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+    const availW = label.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    const contentH = content.scrollHeight;
+    const contentW = content.scrollWidth;
+    let scale = Math.min(availH / contentH, availW / contentW, 1);
+    if (!isFinite(scale) || scale <= 0) scale = 1;
+    if (scale < minScale) scale = minScale;
+    if (scale < 1) {
+      content.style.width = (100 / scale) + '%';
+      content.style.transform = `scale(${scale})`;
+    }
+  });
+}
+
+(async function(){
+  const { data: sess } = await supabase.auth.getSession();
+  if (!sess || !sess.session) {
+    document.getElementById('labelsRoot').innerHTML = '<p style="font-family:Arial;padding:20px;">Sesi login tidak ditemukan. Buka halaman ini dari dalam aplikasi (setelah login).</p>';
+    return;
+  }
+  const params = new URLSearchParams(location.search);
+  const ids = (params.get('ids') || '').split(',').filter(Boolean);
+  let query = supabase.from('etiket_obat').select('*');
+  query = ids.length ? query.in('id', ids) : query;
+  const { data: rows, error } = await query;
+  if (error) { document.getElementById('labelsRoot').innerHTML = '<p>Gagal memuat data: '+esc(error.message)+'</p>'; return; }
+
+  if (!rows.length) { document.getElementById('labelsRoot').innerHTML = '<p style="font-family:Arial;padding:20px;">Tidak ada data untuk ditampilkan.</p>'; return; }
+
+  document.title = rows.length === 1 ? ('EtiketObat_' + (rows[0].id||'label')) : ('EtiketObat_Batch_' + rows.length + 'label');
+
+  document.getElementById('labelsRoot').innerHTML = rows.map(d => `
+    <div class="label">
+      <div class="fit-content">
+        <div class="pasien-block">
+          <div class="pasien-row">${esc(d.nama_pasien)} / ${esc(d.no_rm)} / ${esc(String(d.tanggal_lahir||'').split('T')[0])}</div>
+        </div>
+        <div class="obat-box">
+          <div class="obat-nama">${esc(d.nama_obat)}</div>
+          <div class="obat-dosis">${esc(d.dosis_obat)}</div>
+        </div>
+        <div class="aturan-row">
+          <span class="aturan-label">ATURAN PAKAI</span>
+          <span class="aturan-value">${esc(d.aturan_pakai)}</span>
+        </div>
+        ${waktuLabel(d.waktu_makan) ? `<div class="waktu-box"><span class="waktu-badge">${esc(waktuLabel(d.waktu_makan))}</span></div>` : ''}
+      </div>
+    </div>
+  `).join('');
+
+  autofitLabels();
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(() => requestAnimationFrame(() => autofitLabels()));
+  }
+  window.addEventListener('resize', () => autofitLabels());
+  window.addEventListener('beforeprint', () => autofitLabels());
+})();
+</script>
+</body>
+</html>
