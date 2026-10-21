@@ -769,14 +769,15 @@ function expandEtiketRowToItems(row) {
       ambil: d.ambil, sediaan: d.sediaan,
       namaPelarut: row.nama_pelarut, volPelarut: row.volume_pelarut_ml, caraPemberian: row.cara_pemberian,
       pelarut: row.pelarut, hariKe: row.hari_ke, budDurasi: row.bud_durasi_jam,
-      merge: idx > 0
+      merge: idx > 0, srcId: row.id
     }));
   }
   return [{
     obatNama: row.nama_obat, dosisMg: row.dosis_mg, obatDosis: row.obat_dosis,
     ambil: row.ambil, sediaan: row.sediaan,
     namaPelarut: row.nama_pelarut, volPelarut: row.volume_pelarut_ml, caraPemberian: row.cara_pemberian,
-    pelarut: row.pelarut, hariKe: row.hari_ke, budDurasi: row.bud_durasi_jam
+    pelarut: row.pelarut, hariKe: row.hari_ke, budDurasi: row.bud_durasi_jam,
+    srcId: row.id
   }];
 }
 
@@ -1076,6 +1077,10 @@ function tambahRegimenItem(prefillItem) {
   document.getElementById('hariKe_' + uid).value = defaultHariKe;
 
   if (prefillItem) {
+    // Ingat baris database asal item ini, supaya saat disimpan (mis. dosis diubah)
+    // baris itu DIPERBARUI, bukan ditambah sebagai baris baru.
+    const itemEl = document.querySelector('.regimen-item[data-uid="' + uid + '"]');
+    if (itemEl) itemEl.dataset.srcId = prefillItem.srcId || '';
     document.getElementById('obatNama_' + uid).value = prefillItem.obatNama || '';
     document.getElementById('dosisMg_' + uid).value = prefillItem.dosisMg || '';
     document.getElementById('obatDosis_' + uid).value = prefillItem.obatDosis || '';
@@ -1230,6 +1235,7 @@ async function simpanEntriBatch() {
     const merge = i > 0 && !!document.getElementById('merge_' + uid)?.checked;
     rawItems.push({
       merge,
+      srcId: itemEls[i].dataset.srcId || '',
       obatNama: document.getElementById('obatNama_' + uid).value.trim(),
       dosisMg: parseFloat(document.getElementById('dosisMg_' + uid).value) || null,
       obatDosis,
@@ -1260,6 +1266,7 @@ async function simpanEntriBatch() {
     const leader = members[0];
     if (members.length === 1) {
       return {
+        srcId: leader.srcId,
         obatNama: leader.obatNama, dosisMg: leader.dosisMg, obatDosis: leader.obatDosis,
         ambil: leader.ambil, sediaan: leader.sediaan,
         namaPelarut: leader.namaPelarut, volPelarut: leader.volPelarut, caraPemberian: leader.caraPemberian,
@@ -1271,6 +1278,7 @@ async function simpanEntriBatch() {
     }
     const totalAmbilNum = members.reduce((sum, m) => sum + (parseFloat(m.ambil) || 0), 0);
     return {
+      srcId: leader.srcId,
       obatNama: members.map(m => m.obatNama).filter(Boolean).join(', '),
       dosisMg: null, // dosis campuran, lihat detail_obat untuk rincian per obat
       obatDosis: members.map(m => m.obatDosis).filter(Boolean).join(' + '),
@@ -1305,32 +1313,22 @@ async function simpanEntriBatch() {
      dan menimpanya, sehingga salah satu dosis hilang). */
   const usedExistingIds = new Set();
 
+  /* PENCOCOKAN BARIS LAMA — 2 tahap.
+     Tahap 1 (seperti sebelumnya): baris yang sedang diedit (editId, hanya grup pertama),
+       atau baris dengan no_rm + hari_ke + nama_obat + dosis_mg + nama_pelarut yang SAMA.
+     Tahap 2 (PERBAIKAN): grup yang belum menemukan pasangan tetapi berasal dari etiket
+       lama (srcId, mis. dari "Gunakan"/riwayat kunjungan/edit) memperbarui baris asalnya.
+       Tanpa ini, mengubah dosis dianggap "obat baru" -> baris lama tetap ada dan baru
+       muncul sebagai tambahan, sehingga petugas harus menghapus yang lama dulu.
+     Item yang diketik manual (tanpa srcId) tetap hanya cocok lewat tahap 1, jadi dua dosis
+     berbeda dari obat yang sama pada hari yang sama (mis. Mesna 900 & 2000) tidak saling timpa. */
+  const existingByIdx = [];
   for (let idx = 0; idx < items.length; idx++) {
     const it = items[idx];
     let existing = null;
-
-    /* ============================================================
-       PERBAIKAN BUG #1
-       ------------------------------------------------------------
-       SEBELUM: kalau form dibuka dalam mode edit (editId terisi),
-       SEMUA grup regimen dicocokkan ke `existing = editId` yang SAMA.
-       Akibatnya, kalau ada >1 grup (mis. >4 regimen, atau beberapa
-       regimen yang tidak digabung), tiap grup saling menimpa baris
-       database yang sama secara berurutan. Hasil akhirnya hanya
-       grup TERAKHIR yang benar-benar tersimpan di baris itu.
-
-       SESUDAH: `editId` hanya dipakai untuk mencari existing pada
-       grup PERTAMA (idx === 0), yaitu baris yang sedang diedit.
-       ============================================================ */
     if (editId && idx === 0) {
       existing = CACHE.etiket.find(e => e.id === editId);
     } else {
-      /* PERBAIKAN BUG #2: kriteria pencocokan ditambah dosis_mg dan
-         nama_pelarut (tidak hanya no_rm + hari_ke + nama_obat), dan
-         baris yang sudah dipakai grup lain (usedExistingIds) di-skip.
-         Ini membedakan Mesna 900mg vs Mesna 2000mg pada hari yang
-         sama, yang sebelumnya dianggap "obat yang sama" lalu saling
-         menimpa. */
       existing = CACHE.etiket.find(e =>
         e.no_rm === noRM &&
         String(e.hari_ke || '') === String(it.hariKe || '') &&
@@ -1343,6 +1341,17 @@ async function simpanEntriBatch() {
       );
     }
     if (existing) usedExistingIds.add(existing.id);
+    existingByIdx[idx] = existing || null;
+  }
+  for (let idx = 0; idx < items.length; idx++) {
+    if (existingByIdx[idx] || !items[idx].srcId) continue;
+    const src = CACHE.etiket.find(e => e.id === items[idx].srcId && e.no_rm === noRM && !usedExistingIds.has(e.id));
+    if (src) { existingByIdx[idx] = src; usedExistingIds.add(src.id); }
+  }
+
+  for (let idx = 0; idx < items.length; idx++) {
+    const it = items[idx];
+    const existing = existingByIdx[idx];
 
     const payload = {
       nama_pasien: namaPasien, no_rm: noRM, tanggal_lahir: tanggalLahir, lokasi,
