@@ -455,7 +455,7 @@ function renderKemoRows() {
     g.days = Array.from(dm.values()).sort((a, b) => a.dateKey.localeCompare(b.dateKey) || (a.hari || 0) - (b.hari || 0));
     g.days.forEach((dy, di) => {
       dy.di = di;
-      dy.rows.sort((a, b) => (new Date(a.tanggal_dibuat) - new Date(b.tanggal_dibuat)) || String(a.id).localeCompare(String(b.id)));
+      dy.rows.sort((a, b) => (new Date(a.tanggal_dibuat) - new Date(b.tanggal_dibuat)) || urutanInput(a, b));
       dy.ids = dy.rows.map(r => String(r.id));
     });
     g.ids = g.days.flatMap(dy => dy.ids);
@@ -976,6 +976,18 @@ function tampilkanRiwayat(noRM, silent) {
   `;
 }
 
+// Urutan INPUT ASLI sebuah etiket: yang dibuat lebih dulu berada di atas.
+// Data dari database datang dengan created_at terbaru dulu (lihat loadAllData), jadi tanpa
+// pengurutan ini riwayat kunjungan tampil terbalik. created_at jadi patokan utama, nomor id
+// (inj-NNN, diurutkan sebagai angka) sebagai pemecah kalau created_at sama / kosong.
+function urutanInput(a, b) {
+  const ta = new Date(a.created_at).getTime(), tb = new Date(b.created_at).getTime();
+  if (!isNaN(ta) && !isNaN(tb) && ta !== tb) return ta - tb;
+  const na = parseInt(String(a.id).replace(/\D+/g, ''), 10), nb = parseInt(String(b.id).replace(/\D+/g, ''), 10);
+  if (!isNaN(na) && !isNaN(nb) && na !== nb) return na - nb;
+  return String(a.id).localeCompare(String(b.id), undefined, { numeric: true });
+}
+
 function getBatchesForPasien(noRM) {
   const rows = CACHE.etiket.filter(r => r.no_rm === noRM);
   const map = {};
@@ -986,6 +998,7 @@ function getBatchesForPasien(noRM) {
     map[bid].items.push(r);
   });
   const list = Object.values(map);
+  list.forEach(b => b.items.sort(urutanInput));   // urutan obat sesuai saat pertama kali diinput
   list.forEach(b => b.ringkasan = Array.from(new Set(b.items.map(i=>i.nama_obat).filter(Boolean))).join(', ') || '(tanpa nama obat)');
   list.sort((a,b) => new Date(b.tanggal||0) - new Date(a.tanggal||0));
   return list;
