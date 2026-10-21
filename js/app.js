@@ -1083,7 +1083,15 @@ function tambahRegimenItem(prefillItem) {
     if (itemEl) itemEl.dataset.srcId = prefillItem.srcId || '';
     document.getElementById('obatNama_' + uid).value = prefillItem.obatNama || '';
     document.getElementById('dosisMg_' + uid).value = prefillItem.dosisMg || '';
+    document.getElementById('dosisMg_' + uid).dataset.prev = document.getElementById('dosisMg_' + uid).value;
     document.getElementById('obatDosis_' + uid).value = prefillItem.obatDosis || '';
+    {
+      // Kalau teks etiket persis berpola standar ("<obat> Injeksi (<dosis> mg)"), anggap otomatis
+      // supaya ganti nama obat / dosis ikut memperbarui seluruh teks.
+      const norm = t => String(t || '').toLowerCase().replace(/\s+/g, ' ').trim();
+      const pola = norm((prefillItem.obatNama || '') + (prefillItem.dosisMg ? ' injeksi (' + prefillItem.dosisMg + ' mg)' : ' injeksi'));
+      if (prefillItem.obatDosis && norm(prefillItem.obatDosis) === pola) document.getElementById('obatDosis_' + uid).dataset.auto = '1';
+    }
     document.getElementById('ambil_' + uid).value = prefillItem.ambil || '';
     document.getElementById('sediaan_' + uid).value = prefillItem.sediaan || '';
     document.getElementById('namaPelarut_' + uid).value = prefillItem.namaPelarut || '';
@@ -1148,8 +1156,20 @@ function hitungOtomatis(uid) {
   const ambilField = document.getElementById('ambil_' + uid);
   const obat = cariObat(namaInput.value);
   const dosis = parseFloat(dosisInput.value);
+  const dosisSebelumnya = dosisInput.dataset.prev;   // nilai dosis sebelum perubahan ini (string)
+  dosisInput.dataset.prev = dosisInput.value;
 
-  if (!obat) { konsentrasiInfo.value = ''; calcBox.classList.add('hidden'); return; }
+  // Teks "Nama Obat & Dosis (tampil di etiket)" yang BUKAN hasil otomatis (mis. dimuat dari
+  // etiket lama atau diedit manual) tetap ikut berubah angka dosisnya: "(367 mg)" -> "(355 mg)".
+  // Bagian teks lain yang diketik petugas tidak disentuh.
+  const sinkronDosisDiTeks = () => {
+    if (isNaN(dosis) || !dosisSebelumnya || dosisSebelumnya === dosisInput.value) return;
+    const esc = String(dosisSebelumnya).trim().replace(/\./g, '\\.');   // dosis angka: cukup amankan titik desimal
+    const re = new RegExp('\\(\\s*' + esc + '\\s*mg\\s*\\)', 'i');
+    if (re.test(obatDosisField.value)) obatDosisField.value = obatDosisField.value.replace(re, '(' + dosis + ' mg)');
+  };
+
+  if (!obat) { konsentrasiInfo.value = ''; calcBox.classList.add('hidden'); sinkronDosisDiTeks(); return; }
   konsentrasiInfo.value = obat.konsentrasi + ' ' + (obat.satuan || 'mg/ml');
   if (!isNaN(dosis) && obat.konsentrasi) {
     const vol = dosis / obat.konsentrasi;
@@ -1160,6 +1180,8 @@ function hitungOtomatis(uid) {
   if (!obatDosisField.value || obatDosisField.dataset.auto === '1') {
     obatDosisField.value = obat.nama_obat + (dosis ? ' Injeksi (' + dosis + ' mg)' : ' Injeksi');
     obatDosisField.dataset.auto = '1';
+  } else {
+    sinkronDosisDiTeks();
   }
   hitungTotalVolume(uid);
 }
