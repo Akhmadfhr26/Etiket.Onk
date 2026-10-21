@@ -202,55 +202,114 @@ function toast(container, type, text) {
 /* ============================================================
    HALAMAN: DASHBOARD / DAFTAR ETIKET
    ============================================================ */
+/* ============================================================
+   DAFTAR ETIKET (dashboard)
+   - Kelompok: Pasien > Hari (1 hari = 1 label identitas) > baris etiket
+   - Filter ringkas: Tanggal (Hari ini / Besok / 7 hari ke depan / Semua / pilih tanggal)
+     + Status cetak + kotak cari
+   - Pilihan (centang) disimpan di memori (Set), BUKAN di DOM, jadi tidak hilang
+     saat mengetik di kotak cari, ganti filter, atau tabel dirender ulang
+   - Bar aksi menempel di bawah layar: jumlah terpilih + Cetak / Tandai / Hapus
+   - Status cetak: kolom etiket.dicetak_at (label obat) dan
+     etiket.identitas_dicetak_at (label identitas) -> lihat supabase/schema_dicetak.sql
+   ============================================================ */
+
+window._dash = window._dash || null;
+window._sel = window._sel || { kemo: new Set(), obat: new Set() };
+window._expand = window._expand || {};   // key pasien -> true/false (pilihan manual buka/tutup)
+window._dashView = { jenis: 'kemo', groups: [], ids: [] }; // model hasil render terakhir
+
+/* ---------- helper tanggal LOKAL (toISODateInput memakai UTC, bisa meleset 1 hari di WITA) ---------- */
+function localDateKey(d) {
+  if (!d) return '';
+  const dt = new Date(d);
+  if (isNaN(dt.getTime())) return '';
+  const p = n => String(n).padStart(2, '0');
+  return dt.getFullYear() + '-' + p(dt.getMonth() + 1) + '-' + p(dt.getDate());
+}
+function addDaysKey(key, n) {
+  const [y, m, d] = key.split('-').map(Number);
+  return localDateKey(new Date(y, m - 1, d + n));
+}
+function fmtDateKey(key) {
+  if (!key) return '-';
+  const [y, m, d] = key.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString('id-ID', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+/* ---------- status cetak ---------- */
+function hasPrintCols() {
+  return CACHE.etiket.some(r => 'dicetak_at' in r);
+}
+function printState(r) {
+  const a = !!r.dicetak_at, b = !!r.identitas_dicetak_at;
+  return a && b ? 'sudah' : (a || b ? 'sebagian' : 'belum');
+}
+function printPills(r) {
+  const p = (label, at, title) => at
+    ? `<span class="pill ok" title="${title} dicetak ${escapeHtml(fmtDateTime(at))}">${label} ✓</span>`
+    : `<span class="pill off" title="${title} belum dicetak">${label} –</span>`;
+  return p('🏷️', r.dicetak_at, 'Label obat') + ' ' + p('🪪', r.identitas_dicetak_at, 'Label identitas');
+}
+
+/* ---------- state dashboard ---------- */
+function initDashState() {
+  if (window._dash) return;
+  const today = localDateKey(new Date());
+  const adaHariIni = CACHE.etiket.some(r => localDateKey(r.tanggal_dibuat) === today);
+  // Kalau hari ini kosong tapi data ada, mulai dari "Semua" supaya tidak terlihat seperti data hilang
+  window._dash = { jenis: 'kemo', range: (adaHariIni || !CACHE.etiket.length) ? 'today' : 'all', date: '', status: 'all' };
+}
+
+function rangeMatch(key, range, date) {
+  const today = localDateKey(new Date());
+  switch (range) {
+    case 'today':    return key === today;
+    case 'tomorrow': return key === addDaysKey(today, 1);
+    case 'week':     return key >= today && key <= addDaysKey(today, 6);
+    case 'date':     return !date || key === date;
+    default:         return true;
+  }
+}
+
+function currentSel() {
+  return window._sel[window._dash && window._dash.jenis === 'obat' ? 'obat' : 'kemo'];
+}
+
+// Buang id yang sudah tidak ada lagi di data (mis. sudah dihapus)
+function pruneSelection() {
+  const k = new Set(CACHE.etiket.map(r => String(r.id)));
+  window._sel.kemo.forEach(id => { if (!k.has(id)) window._sel.kemo.delete(id); });
+  const o = new Set(CACHE.etiketObat.map(r => String(r.id)));
+  window._sel.obat.forEach(id => { if (!o.has(id)) window._sel.obat.delete(id); });
+}
+
 function renderDashboard(content) {
+  initDashState();
+  pruneSelection();
   const rows = CACHE.etiket;
-  const dateSet = Array.from(new Set(rows.map(r => toISODateInput(r.tanggal_dibuat)).filter(Boolean))).sort().reverse();
+  const d = window._dash;
 
   content.innerHTML = `
     <div class="stat-row">
       <div class="stat-box"><div class="num">${rows.length}</div><div class="lab">Total Etiket</div></div>
       <div class="stat-box"><div class="num">${CACHE.pasien.length}</div><div class="lab">Total Pasien</div></div>
-      <div class="stat-box"><div class="num">${Array.from(new Set(rows.map(r=>r.batch_id).filter(Boolean))).length}</div><div class="lab">Total Kunjungan (Batch)</div></div>
+      <div class="stat-box"><div class="num">${Array.from(new Set(rows.map(r => r.batch_id).filter(Boolean))).length}</div><div class="lab">Total Kunjungan (Batch)</div></div>
     </div>
     <div class="card">
       <div class="chip-row" id="jenisEtiketTabs">
-        <span class="chip active" data-j="kemo" onclick="setJenisEtiket('kemo')">🧪 Etiket Kemo (Infus)</span>
-        <span class="chip" data-j="obat" onclick="setJenisEtiket('obat')">💊 Etiket Obat</span>
+        <span class="chip ${d.jenis === 'kemo' ? 'active' : ''}" data-j="kemo" onclick="setJenisEtiket('kemo')">🧪 Etiket Kemo (Infus)</span>
+        <span class="chip ${d.jenis === 'obat' ? 'active' : ''}" data-j="obat" onclick="setJenisEtiket('obat')">💊 Etiket Obat</span>
       </div>
       <div class="toolbar">
         <input type="text" id="searchEtiket" class="search-box" placeholder="Cari nama pasien / No RM / obat...">
         <div class="spacer"></div>
+        <button class="btn ghost small" id="btnBukaSemua" onclick="bukaTutupSemuaGrup(true)">▾ Buka semua</button>
+        <button class="btn ghost small" id="btnTutupSemua" onclick="bukaTutupSemuaGrup(false)">▸ Tutup semua</button>
         <button class="btn secondary" onclick="navigate('entri')">➕ Entri Baru</button>
-        <button class="btn" id="btnCetakLabelKemo" onclick="cetakTerpilih('label')">🏷️ Cetak Label Obat</button>
-        <button class="btn" id="btnCetakIdentitasKemo" onclick="cetakTerpilih('identitas')">🪪 Cetak Label Identitas</button>
-        <button class="btn hidden" id="btnCetakObat" onclick="cetakTerpilihObat()">💊 Cetak Etiket Obat</button>
-        <button class="btn danger" id="btnHapusKemo" onclick="hapusTerpilih()">🗑️ Hapus Terpilih</button>
-        <button class="btn danger hidden" id="btnHapusObat" onclick="hapusTerpilihObat()">🗑️ Hapus Terpilih</button>
       </div>
-      <div class="chip-row" id="dateChips">
-        <span class="chip active" data-d="" onclick="filterByDate('')">Semua Tanggal</span>
-        ${dateSet.map(d => `<span class="chip" data-d="${d}" onclick="filterByDate('${d}')">${fmtDate(d)}</span>`).join('')}
-      </div>
-
-      <div class="toolbar" id="rowDatePicker" style="margin-top:10px;flex-wrap:wrap;gap:10px;">
-        <label style="font-size:12.5px;display:flex;align-items:center;gap:6px;">
-          📅 Pilih Tanggal:
-          <input type="date" id="datePickerFilter" onchange="filterByDatePickerValue(this.value)" style="width:auto;max-width:170px;">
-        </label>
-        <button class="btn ghost" style="padding:5px 10px;" onclick="resetDatePicker()">Reset Tanggal</button>
-        <div class="spacer"></div>
-        <button class="btn secondary" type="button" id="btnTogglePasienChecklist" onclick="togglePatientChecklist()">👤 Pilih per Pasien ▾</button>
-      </div>
-
-      <div id="patientChecklistBox" class="hidden" style="margin:8px 0 14px;padding:10px;border:1px solid #ddd;border-radius:8px;max-height:260px;overflow-y:auto;">
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
-          <input type="text" id="searchPasienChecklist" class="search-box" placeholder="Cari nama pasien di daftar ini..." oninput="renderPatientChecklist()" style="flex:1;min-width:200px;">
-          <button class="btn ghost" style="padding:5px 10px;" onclick="centangSemuaPasien(true)">Centang Semua</button>
-          <button class="btn ghost" style="padding:5px 10px;" onclick="centangSemuaPasien(false)">Kosongkan Semua</button>
-        </div>
-        <div id="patientCheckboxList"></div>
-      </div>
-
+      <div id="dashFilters"></div>
+      <div class="muted" id="viewSummary" style="font-size:12.5px;margin:2px 0 8px;"></div>
       <div style="overflow-x:auto;">
         <table class="data-grid" id="etiketTable">
           <thead id="etiketThead"></thead>
@@ -258,32 +317,31 @@ function renderDashboard(content) {
         </table>
       </div>
     </div>
+    <div id="selBar" class="sel-bar hidden"></div>
   `;
   document.getElementById('searchEtiket').addEventListener('input', renderEtiketRows);
-  window._activeDateFilter = '';
-  window._activeJenisEtiket = 'kemo';
+  document.getElementById('etiketTable').addEventListener('change', onEtiketChange);
+  document.getElementById('etiketTbody').addEventListener('click', onEtiketClick);
   renderEtiketTheadAndButtons();
+  renderDashFilters();
   renderEtiketRows();
 }
 
 /* ---------------- TOGGLE JENIS ETIKET: KEMO / OBAT ---------------- */
-// Dashboard "Daftar Etiket" ini menampilkan 2 jenis data dari 2 tabel
-// berbeda (etiket kemo & etiket_obat) di 1 halaman yang sama, tanpa
-// menambah menu sidebar baru. Yang berubah hanya isi tabel & tombol aksi;
-// tidak menyentuh logic etiket kemo yang sudah ada.
 function setJenisEtiket(jenis) {
-  window._activeJenisEtiket = jenis;
+  window._dash.jenis = jenis;
   document.querySelectorAll('#jenisEtiketTabs .chip').forEach(c => c.classList.toggle('active', c.getAttribute('data-j') === jenis));
   renderEtiketTheadAndButtons();
+  renderDashFilters();
   renderEtiketRows();
 }
 
 function renderEtiketTheadAndButtons() {
-  const jenis = window._activeJenisEtiket || 'kemo';
-  const isObat = jenis === 'obat';
+  const isObat = window._dash.jenis === 'obat';
+  const printOn = hasPrintCols();
   document.getElementById('etiketThead').innerHTML = isObat ? `
     <tr>
-      <th class="checkbox-cell"><input type="checkbox" onclick="toggleAllRowsAny(this)"></th>
+      <th class="checkbox-cell"><input type="checkbox" id="chkAll" data-act="sel-all" title="Pilih semua yang tampil"></th>
       <th>Pasien / No RM</th>
       <th>Nama &amp; Dosis Obat</th>
       <th>Aturan Pakai</th>
@@ -293,24 +351,58 @@ function renderEtiketTheadAndButtons() {
       <th></th>
     </tr>` : `
     <tr>
-      <th class="checkbox-cell"><input type="checkbox" onclick="toggleAllRowsAny(this)"></th>
-      <th>Pasien / No RM</th>
-      <th>Obat &amp; Dosis</th>
+      <th class="checkbox-cell"><input type="checkbox" id="chkAll" data-act="sel-all" title="Pilih semua yang tampil"></th>
+      <th>Pasien / Obat &amp; Dosis</th>
       <th>Hari Ke</th>
       <th>Tanggal Dibuat</th>
       <th>BUD (EXP)</th>
+      ${printOn ? '<th title="🏷️ = Label Obat · 🪪 = Label Identitas">Status Cetak</th>' : ''}
       <th>Petugas</th>
       <th></th>
     </tr>`;
-  document.getElementById('btnCetakLabelKemo').classList.toggle('hidden', isObat);
-  document.getElementById('btnCetakIdentitasKemo').classList.toggle('hidden', isObat);
-  document.getElementById('btnHapusKemo').classList.toggle('hidden', isObat);
-  document.getElementById('btnCetakObat').classList.toggle('hidden', !isObat);
-  document.getElementById('btnHapusObat').classList.toggle('hidden', !isObat);
-  // Filter tanggal & checklist per-pasien di bawah ini dipakai khusus etiket kemo
-  document.getElementById('dateChips').classList.toggle('hidden', isObat);
-  document.getElementById('rowDatePicker').classList.toggle('hidden', isObat);
-  document.getElementById('patientChecklistBox').classList.toggle('hidden', true); // selalu tutup saat ganti tab
+  document.getElementById('btnBukaSemua').classList.toggle('hidden', isObat);
+  document.getElementById('btnTutupSemua').classList.toggle('hidden', isObat);
+}
+
+/* ---------------- FILTER (satu bar) ---------------- */
+function renderDashFilters() {
+  const box = document.getElementById('dashFilters');
+  if (!box) return;
+  const d = window._dash;
+  if (d.jenis !== 'kemo') { box.innerHTML = ''; return; }
+  const printOn = hasPrintCols();
+  const cnt = (range) => CACHE.etiket.filter(r => rangeMatch(localDateKey(r.tanggal_dibuat), range, d.date)).length;
+  const rng = (v, label) => `<span class="chip ${d.range === v ? 'active' : ''}" onclick="setDashRange('${v}')">${label} <small>${cnt(v)}</small></span>`;
+  const st = (v, label) => `<span class="chip ${d.status === v ? 'active' : ''}" onclick="setDashStatus('${v}')">${label}</span>`;
+  box.innerHTML = `
+    ${(!printOn && CACHE.etiket.length) ? `<div class="msg warn">Status cetak belum aktif. Jalankan file <b>supabase/schema_dicetak.sql</b> di Supabase &gt; SQL Editor, lalu muat ulang halaman ini.</div>` : ''}
+    <div class="filter-line">
+      <span class="filter-label">Tanggal</span>
+      ${rng('today', 'Hari ini')}${rng('tomorrow', 'Besok')}${rng('week', '7 hari ke depan')}${rng('all', 'Semua')}
+      <input type="date" class="date-chip ${d.range === 'date' ? 'active' : ''}" value="${escapeHtml(d.date || '')}" onchange="setDashDate(this.value)" title="Pilih tanggal tertentu">
+    </div>
+    ${printOn ? `
+    <div class="filter-line">
+      <span class="filter-label">Status</span>
+      ${st('all', 'Semua')}${st('belum', '⏳ Belum dicetak')}${st('sudah', '✅ Sudah dicetak')}
+      <span class="spacer"></span>
+      <button class="btn ghost small" onclick="pilihBelumDicetak()" title="Centang semua etiket yang tampil dan belum lengkap dicetak">☑ Pilih yang belum dicetak</button>
+    </div>` : ''}
+  `;
+}
+function setDashRange(v) { window._dash.range = v; if (v !== 'date') window._dash.date = ''; renderDashFilters(); renderEtiketRows(); }
+function setDashDate(v) { window._dash.date = v || ''; window._dash.range = v ? 'date' : 'all'; renderDashFilters(); renderEtiketRows(); }
+function setDashStatus(v) { window._dash.status = v; renderDashFilters(); renderEtiketRows(); }
+function resetDashFilters() { window._dash.range = 'all'; window._dash.date = ''; window._dash.status = 'all'; renderDashFilters(); renderEtiketRows(); }
+
+/* ---------------- BUKA / TUTUP KELOMPOK ---------------- */
+function isGroupExpanded(key, totalGroups, searching) {
+  if (key in window._expand) return window._expand[key];
+  return totalGroups <= 3 || (searching && totalGroups <= 8);
+}
+function bukaTutupSemuaGrup(open) {
+  (window._dashView.groups || []).forEach(g => { window._expand[g.key] = open; });
+  renderEtiketRows();
 }
 
 function waktuMakanLabel(v) {
@@ -320,204 +412,284 @@ function waktuMakanLabel(v) {
   return '-';
 }
 
-function toggleAllRowsAny(cb) {
-  const sel = (window._activeJenisEtiket === 'obat') ? '.row-check-obat' : '.row-check';
-  document.querySelectorAll(sel).forEach(c => c.checked = cb.checked);
-}
-function getCheckedIdsObat() {
-  return Array.from(document.querySelectorAll('.row-check-obat:checked')).map(c => c.value);
-}
-
-function cetakTerpilihObat() {
-  const ids = getCheckedIdsObat();
-  if (!ids.length) { alert('Pilih minimal satu etiket obat dulu (centang di tabel).'); return; }
-  window.open('print/label-obat.html?ids=' + encodeURIComponent(ids.join(',')), '_blank');
-}
-
-async function hapusTerpilihObat() {
-  const ids = getCheckedIdsObat();
-  if (!ids.length) { alert('Pilih minimal satu etiket obat dulu.'); return; }
-  if (!confirm('Hapus ' + ids.length + ' etiket obat terpilih? Tindakan ini tidak bisa dibatalkan.')) return;
-  const { error } = await supabase.from('etiket_obat').delete().in('id', ids);
-  if (error) { alert('Gagal menghapus: ' + error.message); return; }
-  await loadAllData();
-  navigate('dashboard');
-}
-
-async function hapusSatuEtiketObat(id) {
-  if (!confirm('Hapus etiket obat ini?')) return;
-  const { error } = await supabase.from('etiket_obat').delete().eq('id', id);
-  if (error) { alert('Gagal menghapus: ' + error.message); return; }
-  await loadAllData();
-  navigate('dashboard');
-}
-
-function filterByDate(d) {
-  window._activeDateFilter = d;
-  document.querySelectorAll('#dateChips .chip').forEach(c => c.classList.toggle('active', c.getAttribute('data-d') === d));
-  const picker = document.getElementById('datePickerFilter');
-  if (picker) picker.value = d || '';
-  renderEtiketRows();
-  // Kalau panel checklist pasien sedang terbuka, refresh juga daftarnya
-  // supaya mengikuti tanggal yang baru difilter.
-  const box = document.getElementById('patientChecklistBox');
-  if (box && !box.classList.contains('hidden')) renderPatientChecklist();
-}
-
-// Dipanggil saat petugas memilih tanggal lewat kalender (input type="date").
-function filterByDatePickerValue(value) {
-  filterByDate(value || '');
-}
-
-function resetDatePicker() {
-  const picker = document.getElementById('datePickerFilter');
-  if (picker) picker.value = '';
-  filterByDate('');
-}
-
-/* ---------------- CHECKLIST NAMA PASIEN (untuk cetak massal) ---------------- */
-
-function togglePatientChecklist() {
-  const box = document.getElementById('patientChecklistBox');
-  if (!box) return;
-  const willShow = box.classList.contains('hidden');
-  box.classList.toggle('hidden', !willShow);
-  if (willShow) renderPatientChecklist();
-}
-
-// Menampilkan daftar pasien unik (mengikuti filter tanggal & kotak pencarian
-// di dalam panel ini) sebagai checkbox. Mencentang satu pasien akan
-// mencentang semua baris etiket miliknya yang sedang tampil di tabel.
-function renderPatientChecklist() {
-  const box = document.getElementById('patientCheckboxList');
-  if (!box) return;
-  const dateFilter = window._activeDateFilter || '';
-  const q = (document.getElementById('searchPasienChecklist')?.value || '').toLowerCase().trim();
-
-  const rows = dateFilter
-    ? CACHE.etiket.filter(r => toISODateInput(r.tanggal_dibuat) === dateFilter)
-    : CACHE.etiket;
-
-  const map = {};
-  rows.forEach(r => {
-    if (!map[r.no_rm]) map[r.no_rm] = { nama: r.nama_pasien, count: 0 };
-    map[r.no_rm].count++;
-  });
-
-  let list = Object.entries(map);
-  if (q) {
-    list = list.filter(([noRM, info]) => (info.nama + ' ' + noRM).toLowerCase().includes(q));
-  }
-  list.sort((a, b) => a[1].nama.localeCompare(b[1].nama, 'id'));
-
-  if (!list.length) {
-    box.innerHTML = '<p class="muted" style="font-size:12.5px;">Tidak ada pasien yang cocok.</p>';
-    return;
-  }
-
-  box.innerHTML = list.map(([noRM, info]) => `
-    <label class="checkbox-inline" style="display:block;padding:4px 0;">
-      <input type="checkbox" class="patient-check" data-norm="${escapeHtml(noRM)}" onchange="terapkanCentangPasien('${escapeHtml(noRM)}', this.checked)">
-      ${escapeHtml(info.nama)} <span class="muted rm-code">(${escapeHtml(noRM)})</span> — ${info.count} etiket
-    </label>`
-  ).join('');
-}
-
-// Mencentang / mengosongkan semua baris etiket (checkbox di tabel) milik
-// satu No RM tertentu, sesuai baris mana saja yang sedang tampil di tabel
-// (mengikuti pencarian & filter tanggal di tabel utama).
-function terapkanCentangPasien(noRM, checked) {
-  document.querySelectorAll('.row-check').forEach(cb => {
-    if (cb.dataset.norm === noRM) cb.checked = checked;
-  });
-}
-
-// Tombol "Centang Semua" / "Kosongkan Semua" di panel checklist pasien:
-// menerapkan ke semua pasien yang sedang tampil di panel ini sekaligus.
-function centangSemuaPasien(state) {
-  document.querySelectorAll('.patient-check').forEach(cb => {
-    cb.checked = state;
-    terapkanCentangPasien(cb.dataset.norm, state);
-  });
-}
-
+/* ---------------- RENDER BARIS ---------------- */
 function renderEtiketRows() {
+  if (window._dash.jenis === 'obat') renderObatRows(); else renderKemoRows();
+  syncSelectionUI();
+}
+
+function renderKemoRows() {
+  const d = window._dash;
+  const printOn = hasPrintCols();
   const q = (document.getElementById('searchEtiket')?.value || '').toLowerCase().trim();
   const tbody = document.getElementById('etiketTbody');
+  const cols = printOn ? 8 : 7;
 
-  if ((window._activeJenisEtiket || 'kemo') === 'obat') {
-    const rowsObat = CACHE.etiketObat.filter(r => {
-      if (!q) return true;
-      return [r.nama_pasien, r.no_rm, r.nama_obat, r.dosis_obat, r.aturan_pakai].some(v => String(v || '').toLowerCase().includes(q));
-    });
-    if (!rowsObat.length) {
-      tbody.innerHTML = `<tr><td colspan="8" class="muted" style="text-align:center;padding:24px;">Tidak ada data.</td></tr>`;
-      return;
-    }
-    tbody.innerHTML = rowsObat.map(r => `
-      <tr>
-        <td class="checkbox-cell"><input type="checkbox" class="row-check-obat" value="${r.id}" data-norm="${escapeHtml(r.no_rm)}"></td>
-        <td><b>${escapeHtml(r.nama_pasien)}</b><br><span class="muted rm-code">${escapeHtml(r.no_rm)}</span></td>
-        <td><b>${escapeHtml(r.nama_obat)}</b><br><span class="muted">${escapeHtml(r.dosis_obat || '')}</span></td>
-        <td>${escapeHtml(r.aturan_pakai || '')}</td>
-        <td>${escapeHtml(waktuMakanLabel(r.waktu_makan))}</td>
-        <td>${fmtDateTime(r.created_at)}</td>
-        <td>${escapeHtml(r.petugas || '')}</td>
-        <td class="actions-cell">
-          <button class="icon-btn danger" title="Hapus" onclick="hapusSatuEtiketObat('${r.id}')">🗑️</button>
-        </td>
-      </tr>
-    `).join('');
-    return;
-  }
-
-  const dateFilter = window._activeDateFilter || '';
   const rows = CACHE.etiket.filter(r => {
-    if (dateFilter && toISODateInput(r.tanggal_dibuat) !== dateFilter) return false;
+    if (!rangeMatch(localDateKey(r.tanggal_dibuat), d.range, d.date)) return false;
+    if (printOn && d.status === 'belum' && printState(r) === 'sudah') return false;
+    if (printOn && d.status === 'sudah' && printState(r) !== 'sudah') return false;
     if (!q) return true;
     return [r.nama_pasien, r.no_rm, r.obat_dosis, r.nama_obat].some(v => String(v || '').toLowerCase().includes(q));
   });
-  if (!rows.length) {
+
+  // Kelompok 1: pasien
+  const map = new Map();
+  rows.forEach(r => {
+    const k = String(r.no_rm || r.nama_pasien || '-');
+    if (!map.has(k)) map.set(k, { key: k, nama: r.nama_pasien, norm: r.no_rm, rows: [] });
+    map.get(k).rows.push(r);
+  });
+  const groups = Array.from(map.values()).sort((a, b) => String(a.nama || '').localeCompare(String(b.nama || ''), 'id'));
+
+  groups.forEach((g, gi) => {
+    g.gi = gi;
+    // Kelompok 2: hari (tanggal + hari ke) = persis 1 label identitas
+    const dm = new Map();
+    g.rows.forEach(r => {
+      const dk = localDateKey(r.tanggal_dibuat);
+      const k = dk + '|' + (r.hari_ke || '');
+      if (!dm.has(k)) dm.set(k, { key: k, dateKey: dk, hari: r.hari_ke, rows: [] });
+      dm.get(k).rows.push(r);
+    });
+    g.days = Array.from(dm.values()).sort((a, b) => a.dateKey.localeCompare(b.dateKey) || (a.hari || 0) - (b.hari || 0));
+    g.days.forEach((dy, di) => {
+      dy.di = di;
+      dy.rows.sort((a, b) => (new Date(a.tanggal_dibuat) - new Date(b.tanggal_dibuat)) || String(a.id).localeCompare(String(b.id)));
+      dy.ids = dy.rows.map(r => String(r.id));
+    });
+    g.ids = g.days.flatMap(dy => dy.ids);
+    g.expanded = isGroupExpanded(g.key, groups.length, !!q);
+  });
+
+  window._dashView = { jenis: 'kemo', groups, ids: groups.flatMap(g => g.ids) };
+
+  const rangeLabel = { today: 'Hari ini', tomorrow: 'Besok', week: '7 hari ke depan', all: 'Semua tanggal', date: d.date ? fmtDateKey(d.date) : 'Semua tanggal' }[d.range];
+  document.getElementById('viewSummary').innerHTML =
+    `Menampilkan <b>${rows.length}</b> etiket dari <b>${groups.length}</b> pasien · ${escapeHtml(rangeLabel)}` +
+    (printOn && d.status !== 'all' ? ' · ' + (d.status === 'belum' ? 'belum dicetak' : 'sudah dicetak') : '') +
+    (q ? ` · cari "${escapeHtml(q)}"` : '');
+
+  if (!groups.length) {
+    const adaData = CACHE.etiket.length > 0;
+    tbody.innerHTML = `<tr><td colspan="${cols}" class="muted" style="text-align:center;padding:24px;">Tidak ada data${adaData ? ' untuk filter ini.<br><button class="btn ghost small" style="margin-top:10px;" onclick="resetDashFilters()">Tampilkan semua</button>' : '.'}</td></tr>`;
+    return;
+  }
+
+  let html = '';
+  groups.forEach(g => {
+    const belum = printOn ? g.days.reduce((n, dy) => n + dy.rows.filter(r => printState(r) !== 'sudah').length, 0) : 0;
+    const statusPill = !printOn ? '' : (belum
+      ? `<span class="pill warn">${belum} belum dicetak</span>`
+      : `<span class="pill ok">✓ semua tercetak</span>`);
+    html += `
+      <tr class="grp-pasien" data-act="toggle-pasien" data-gi="${g.gi}">
+        <td class="checkbox-cell"><input type="checkbox" data-act="sel-pasien" data-gi="${g.gi}" title="Pilih semua etiket pasien ini"></td>
+        <td colspan="${cols - 1}">
+          <span class="caret">${g.expanded ? '▾' : '▸'}</span>
+          <b>${escapeHtml(g.nama)}</b> <span class="muted rm-code">${escapeHtml(g.norm)}</span>
+          <span class="grp-meta">· ${g.ids.length} etiket · ${g.days.length} hari</span> ${statusPill}
+        </td>
+      </tr>`;
+    if (!g.expanded) return;
+    g.days.forEach(dy => {
+      html += `
+      <tr class="grp-hari">
+        <td class="checkbox-cell"><input type="checkbox" data-act="sel-hari" data-gi="${g.gi}" data-di="${dy.di}" title="Pilih semua etiket hari ini"></td>
+        <td colspan="${cols - 1}">${dy.hari ? 'H-' + escapeHtml(dy.hari) + ' · ' : ''}${escapeHtml(fmtDateKey(dy.dateKey))} <span class="grp-meta">· ${dy.rows.length} etiket</span></td>
+      </tr>`;
+      dy.rows.forEach(r => {
+        html += `
+      <tr class="row-etiket">
+        <td class="checkbox-cell"><input type="checkbox" data-act="sel-row" value="${escapeHtml(r.id)}"></td>
+        <td>${escapeHtml(r.obat_dosis)}</td>
+        <td>${r.hari_ke ? '<span class="badge">H-' + escapeHtml(r.hari_ke) + '</span>' : ''}</td>
+        <td>${fmtDateTime(r.tanggal_dibuat)}</td>
+        <td>${computeBud(r)}</td>
+        ${printOn ? `<td style="white-space:nowrap;">${printPills(r)}</td>` : ''}
+        <td>${escapeHtml(r.petugas || '')}</td>
+        <td class="actions-cell">
+          <button class="icon-btn" title="Edit" onclick="editEtiket('${escapeHtml(r.id)}')">✏️</button>
+          <button class="icon-btn danger" title="Hapus" onclick="hapusSatuEtiket('${escapeHtml(r.id)}')">🗑️</button>
+        </td>
+      </tr>`;
+      });
+    });
+  });
+  tbody.innerHTML = html;
+}
+
+function renderObatRows() {
+  const q = (document.getElementById('searchEtiket')?.value || '').toLowerCase().trim();
+  const tbody = document.getElementById('etiketTbody');
+  const rowsObat = CACHE.etiketObat.filter(r => {
+    if (!q) return true;
+    return [r.nama_pasien, r.no_rm, r.nama_obat, r.dosis_obat, r.aturan_pakai].some(v => String(v || '').toLowerCase().includes(q));
+  });
+  window._dashView = { jenis: 'obat', groups: [], ids: rowsObat.map(r => String(r.id)) };
+  document.getElementById('viewSummary').innerHTML = `Menampilkan <b>${rowsObat.length}</b> etiket obat` + (q ? ` · cari "${escapeHtml(q)}"` : '');
+  if (!rowsObat.length) {
     tbody.innerHTML = `<tr><td colspan="8" class="muted" style="text-align:center;padding:24px;">Tidak ada data.</td></tr>`;
     return;
   }
-  tbody.innerHTML = rows.map(r => `
+  tbody.innerHTML = rowsObat.map(r => `
     <tr>
-      <td class="checkbox-cell"><input type="checkbox" class="row-check" value="${r.id}" data-norm="${escapeHtml(r.no_rm)}"></td>
+      <td class="checkbox-cell"><input type="checkbox" data-act="sel-row-obat" value="${escapeHtml(r.id)}"></td>
       <td><b>${escapeHtml(r.nama_pasien)}</b><br><span class="muted rm-code">${escapeHtml(r.no_rm)}</span></td>
-      <td>${escapeHtml(r.obat_dosis)}</td>
-      <td>${r.hari_ke ? '<span class="badge">H-' + r.hari_ke + '</span>' : ''}</td>
-      <td>${fmtDateTime(r.tanggal_dibuat)}</td>
-      <td>${computeBud(r)}</td>
+      <td><b>${escapeHtml(r.nama_obat)}</b><br><span class="muted">${escapeHtml(r.dosis_obat || '')}</span></td>
+      <td>${escapeHtml(r.aturan_pakai || '')}</td>
+      <td>${escapeHtml(waktuMakanLabel(r.waktu_makan))}</td>
+      <td>${fmtDateTime(r.created_at)}</td>
       <td>${escapeHtml(r.petugas || '')}</td>
       <td class="actions-cell">
-        <button class="icon-btn" title="Edit" onclick="editEtiket('${r.id}')">✏️</button>
-        <button class="icon-btn danger" title="Hapus" onclick="hapusSatuEtiket('${r.id}')">🗑️</button>
+        <button class="icon-btn danger" title="Hapus" onclick="hapusSatuEtiketObat('${escapeHtml(r.id)}')">🗑️</button>
       </td>
     </tr>
   `).join('');
 }
 
-function toggleAllRows(cb) {
-  document.querySelectorAll('.row-check').forEach(c => c.checked = cb.checked);
-}
-function getCheckedIds() {
-  return Array.from(document.querySelectorAll('.row-check:checked')).map(c => c.value);
+/* ---------------- PILIHAN (disimpan di Set, bukan di DOM) ---------------- */
+function idsForCheckbox(cb) {
+  const v = window._dashView;
+  const act = cb.dataset.act;
+  if (act === 'sel-all') return v.ids;
+  const g = v.groups[parseInt(cb.dataset.gi, 10)];
+  if (!g) return [];
+  if (act === 'sel-pasien') return g.ids;
+  if (act === 'sel-hari') { const dy = g.days[parseInt(cb.dataset.di, 10)]; return dy ? dy.ids : []; }
+  return [];
 }
 
+function onEtiketChange(e) {
+  const cb = e.target;
+  if (!(cb instanceof HTMLInputElement) || !cb.dataset.act) return;
+  const sel = currentSel();
+  const act = cb.dataset.act;
+  const ids = (act === 'sel-row' || act === 'sel-row-obat') ? [cb.value] : idsForCheckbox(cb);
+  ids.forEach(id => { if (cb.checked) sel.add(id); else sel.delete(id); });
+  syncSelectionUI();
+}
+
+function onEtiketClick(e) {
+  const el = e.target.closest('[data-act]');
+  if (!el || el.tagName === 'INPUT') return;
+  if (el.dataset.act === 'toggle-pasien') {
+    const g = window._dashView.groups[parseInt(el.dataset.gi, 10)];
+    if (!g) return;
+    window._expand[g.key] = !g.expanded;
+    renderEtiketRows();
+  }
+}
+
+// Samakan tampilan semua checkbox dengan isi Set (termasuk status "sebagian" pada pasien/hari)
+function syncSelectionUI() {
+  const table = document.getElementById('etiketTable');
+  if (!table) return;
+  const sel = currentSel();
+  table.querySelectorAll('input[data-act]').forEach(cb => {
+    const act = cb.dataset.act;
+    if (act === 'sel-row' || act === 'sel-row-obat') { cb.checked = sel.has(cb.value); return; }
+    const ids = idsForCheckbox(cb);
+    const n = ids.reduce((c, id) => c + (sel.has(id) ? 1 : 0), 0);
+    cb.checked = ids.length > 0 && n === ids.length;
+    cb.indeterminate = n > 0 && n < ids.length;
+  });
+  updateSelBar();
+}
+
+function pilihBelumDicetak() {
+  const sel = window._sel.kemo;
+  (window._dashView.groups || []).forEach(g => g.days.forEach(dy => dy.rows.forEach(r => {
+    if (printState(r) !== 'sudah') sel.add(String(r.id));
+  })));
+  syncSelectionUI();
+}
+
+function kosongkanPilihan() {
+  currentSel().clear();
+  syncSelectionUI();
+}
+
+function hiddenSelCount() {
+  const visible = new Set(window._dashView.ids);
+  let n = 0;
+  currentSel().forEach(id => { if (!visible.has(id)) n++; });
+  return n;
+}
+
+function updateSelBar() {
+  const bar = document.getElementById('selBar');
+  if (!bar) return;
+  const sel = currentSel();
+  if (!sel.size) { bar.classList.add('hidden'); bar.innerHTML = ''; return; }
+  const isObat = window._dash.jenis === 'obat';
+  const src = isObat ? CACHE.etiketObat : CACHE.etiket;
+  const byId = new Map(src.map(r => [String(r.id), r]));
+  const pasienSet = new Set();
+  sel.forEach(id => { const r = byId.get(id); if (r) pasienSet.add(r.no_rm || r.nama_pasien); });
+  const hidden = hiddenSelCount();
+  const printOn = hasPrintCols();
+
+  bar.classList.remove('hidden');
+  bar.innerHTML = `
+    <div class="sel-info">
+      <b>${sel.size}</b> etiket · <b>${pasienSet.size}</b> pasien dipilih
+      ${hidden ? `<span class="sel-hidden">(${hidden} di luar filter saat ini)</span>` : ''}
+    </div>
+    <div class="sel-actions">
+      ${isObat ? `
+        <button class="btn" onclick="cetakTerpilihObat()">💊 Cetak Etiket Obat</button>
+        <button class="btn danger" onclick="hapusTerpilihObat()">🗑️ Hapus</button>
+      ` : `
+        <button class="btn" onclick="cetakTerpilih('label')">🏷️ Cetak Label Obat</button>
+        <button class="btn" onclick="cetakTerpilih('identitas')">🪪 Cetak Label Identitas</button>
+        ${printOn ? `<select onchange="tandaiCetakTerpilih(this.value); this.value='';" title="Ubah status cetak etiket terpilih secara manual">
+          <option value="">Tandai…</option>
+          <option value="sudah">✔ Sudah dicetak</option>
+          <option value="belum">↺ Belum dicetak</option>
+        </select>` : ''}
+        <button class="btn danger" onclick="hapusTerpilih()">🗑️ Hapus</button>
+      `}
+      <button class="btn ghost" onclick="kosongkanPilihan()">✕ Kosongkan</button>
+    </div>`;
+}
+
+/* ---------------- AKSI: CETAK / TANDAI / HAPUS ---------------- */
 function cetakTerpilih(jenis) {
-  const ids = getCheckedIds();
+  const ids = Array.from(window._sel.kemo);
   if (!ids.length) { alert('Pilih minimal satu etiket dulu (centang di tabel).'); return; }
   const page = jenis === 'identitas' ? 'print/label-identitas.html' : 'print/label.html';
   window.open(page + '?ids=' + encodeURIComponent(ids.join(',')), '_blank');
 }
 
+function cetakTerpilihObat() {
+  const ids = Array.from(window._sel.obat);
+  if (!ids.length) { alert('Pilih minimal satu etiket obat dulu (centang di tabel).'); return; }
+  window.open('print/label-obat.html?ids=' + encodeURIComponent(ids.join(',')), '_blank');
+}
+
+async function tandaiCetakTerpilih(val) {
+  if (!val) return;
+  const ids = Array.from(window._sel.kemo);
+  if (!ids.length) return;
+  const at = val === 'sudah' ? new Date().toISOString() : null;
+  const { error } = await supabase.from('etiket').update({ dicetak_at: at, identitas_dicetak_at: at }).in('id', ids);
+  if (error) { alert('Gagal memperbarui status cetak: ' + error.message); return; }
+  const byId = new Map(CACHE.etiket.map(r => [String(r.id), r]));
+  ids.forEach(id => { const r = byId.get(id); if (r) { r.dicetak_at = at; r.identitas_dicetak_at = at; } });
+  renderDashFilters();
+  renderEtiketRows();
+}
+
 async function hapusTerpilih() {
-  const ids = getCheckedIds();
+  const ids = Array.from(window._sel.kemo);
   if (!ids.length) { alert('Pilih minimal satu etiket dulu.'); return; }
-  if (!confirm('Hapus ' + ids.length + ' etiket terpilih? Tindakan ini tidak bisa dibatalkan.')) return;
+  const hidden = hiddenSelCount();
+  const extra = hidden ? '\n\n⚠ ' + hidden + ' di antaranya tidak terlihat karena filter yang sedang aktif.' : '';
+  if (!confirm('Hapus ' + ids.length + ' etiket terpilih? Tindakan ini tidak bisa dibatalkan.' + extra)) return;
   const { error } = await supabase.from('etiket').delete().in('id', ids);
   if (error) { alert('Gagal menghapus: ' + error.message); return; }
+  window._sel.kemo.clear();
   await loadAllData();
   navigate('dashboard');
 }
@@ -526,8 +698,66 @@ async function hapusSatuEtiket(id) {
   if (!confirm('Hapus etiket ini?')) return;
   const { error } = await supabase.from('etiket').delete().eq('id', id);
   if (error) { alert('Gagal menghapus: ' + error.message); return; }
+  window._sel.kemo.delete(String(id));
   await loadAllData();
   navigate('dashboard');
+}
+
+async function hapusTerpilihObat() {
+  const ids = Array.from(window._sel.obat);
+  if (!ids.length) { alert('Pilih minimal satu etiket obat dulu.'); return; }
+  const hidden = hiddenSelCount();
+  const extra = hidden ? '\n\n⚠ ' + hidden + ' di antaranya tidak terlihat karena pencarian yang sedang aktif.' : '';
+  if (!confirm('Hapus ' + ids.length + ' etiket obat terpilih? Tindakan ini tidak bisa dibatalkan.' + extra)) return;
+  const { error } = await supabase.from('etiket_obat').delete().in('id', ids);
+  if (error) { alert('Gagal menghapus: ' + error.message); return; }
+  window._sel.obat.clear();
+  await loadAllData();
+  navigate('dashboard');
+}
+
+async function hapusSatuEtiketObat(id) {
+  if (!confirm('Hapus etiket obat ini?')) return;
+  const { error } = await supabase.from('etiket_obat').delete().eq('id', id);
+  if (error) { alert('Gagal menghapus: ' + error.message); return; }
+  window._sel.obat.delete(String(id));
+  await loadAllData();
+  navigate('dashboard');
+}
+
+/* ---------------- SEGARKAN STATUS CETAK SAAT KEMBALI DARI TAB CETAK ---------------- */
+// Halaman cetak (tab baru) menulis dicetak_at ke database setelah petugas
+// mengonfirmasi. Begitu petugas kembali ke tab ini, ambil ulang data etiket
+// secara diam-diam supaya status & filter langsung mutakhir.
+let _lastEtiketRefresh = 0;
+async function refreshEtiketQuietly() {
+  if (CURRENT_ROUTE !== 'dashboard' || !window._dash || window._dash.jenis !== 'kemo') return;
+  if (!document.getElementById('etiketTbody')) return;
+  const now = Date.now();
+  if (now - _lastEtiketRefresh < 3000) return;
+  _lastEtiketRefresh = now;
+  const { data, error } = await supabase.from('etiket').select('*').order('created_at', { ascending: false });
+  if (error || !data) return;
+  CACHE.etiket = data;
+  pruneSelection();
+  if (!document.getElementById('etiketTbody')) return; // sudah pindah halaman selama menunggu
+  renderDashFilters();
+  renderEtiketRows();
+}
+window.addEventListener('focus', refreshEtiketQuietly);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshEtiketQuietly(); });
+
+/* ---------------- DETEKSI PERUBAHAN ISI LABEL (reset status cetak saat diedit) ---------------- */
+function labelDataChanged(oldRow, newRow) {
+  const s = v => (v == null ? '' : String(v).trim());
+  const n = v => (v == null || v === '' || isNaN(Number(v)) ? '' : String(Number(v)));
+  const t = v => { const x = new Date(v); return isNaN(x.getTime()) ? '' : String(x.getTime()); };
+  const dOnly = v => s(String(v || '').split('T')[0]);
+  return ['nama_pasien', 'no_rm', 'obat_dosis', 'ambil', 'sediaan', 'pelarut', 'total_volume_ml'].some(k => s(oldRow[k]) !== s(newRow[k]))
+    || n(oldRow.hari_ke) !== n(newRow.hari_ke)
+    || n(oldRow.bud_durasi_jam) !== n(newRow.bud_durasi_jam)
+    || t(oldRow.tanggal_dibuat) !== t(newRow.tanggal_dibuat)
+    || dOnly(oldRow.tanggal_lahir) !== dOnly(newRow.tanggal_lahir);
 }
 
 // Pecah satu baris etiket (yang mungkin berisi >1 obat digabung dalam 1 pelarut)
@@ -1127,6 +1357,12 @@ async function simpanEntriBatch() {
 
     if (existing) {
       payload.id = existing.id;
+      // Isi label berubah -> label lama sudah tidak valid, status cetak dikembalikan ke "belum".
+      // (Hanya diisi kalau kolom status cetak memang sudah ada di database.)
+      if (hasPrintCols() && labelDataChanged(existing, payload)) {
+        payload.dicetak_at = null;
+        payload.identitas_dicetak_at = null;
+      }
       const { error } = await supabase.from('etiket').update(payload).eq('id', existing.id);
       if (error) { toast(msgBox, 'err', 'Gagal menyimpan (regimen #' + (idx + 1) + '): ' + error.message); return; }
       overwritten++;
