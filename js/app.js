@@ -1057,7 +1057,7 @@ function itemTemplate(uid) {
     <div id="jadwalSection_${uid}">
       <div class="subsection-divider">Jadwal item ini</div>
       <div class="row2">
-        <div><label>Hari Ke-</label><input type="number" id="hariKe_${uid}" min="1" step="1" oninput="hitungTanggalItem(${uid})"></div>
+        <div><label>Hari Ke-</label><input type="text" id="hariKe_${uid}" inputmode="numeric" autocomplete="off" placeholder="1  atau  1-3  atau  1,3,5" oninput="hitungTanggalItem(${uid})"><div class="hint" style="margin-top:3px;">Default 1 hari. Ketik <b>1-3</b> untuk hari 1 sampai 3 (etiket tergenerate otomatis per hari).</div></div>
         <div><label>BUD Durasi (jam)</label><input type="number" id="budDurasi_${uid}" value="24" step="0.5"></div>
       </div>
       <div class="tanggal-info" id="tanggalInfo_${uid}">📅 Akan dibuat: -</div>
@@ -1081,11 +1081,11 @@ function tambahRegimenItem(prefillItem) {
   // Hari Ke- default: ikuti hari ke item sebelumnya (bukan urutan penambahan).
   // Kalau ini item pertama, defaultnya hari ke-1.
   const items = document.querySelectorAll('.regimen-item');
-  let defaultHariKe = 1;
+  let defaultHariKe = '1';
   if (items.length > 1) {
     const prevUid = items[items.length - 2].getAttribute('data-uid');
-    const prevVal = parseInt(document.getElementById('hariKe_' + prevUid)?.value, 10);
-    defaultHariKe = isNaN(prevVal) ? 1 : prevVal;
+    const prevVal = (document.getElementById('hariKe_' + prevUid)?.value || '').trim();
+    defaultHariKe = prevVal || '1';
   }
   document.getElementById('hariKe_' + uid).value = defaultHariKe;
 
@@ -1111,7 +1111,7 @@ function tambahRegimenItem(prefillItem) {
     document.getElementById('volPelarut_' + uid).value = prefillItem.volPelarut || '';
     document.getElementById('caraPemberian_' + uid).value = prefillItem.caraPemberian || '';
     document.getElementById('pelarut_' + uid).value = prefillItem.pelarut || '';
-    document.getElementById('hariKe_' + uid).value = prefillItem.hariKe || defaultHariKe;
+    document.getElementById('hariKe_' + uid).value = String(prefillItem.hariKe || defaultHariKe);
     document.getElementById('budDurasi_' + uid).value = prefillItem.budDurasi || 24;
     if (prefillItem.merge) {
       const cb = document.getElementById('merge_' + uid);
@@ -1226,17 +1226,67 @@ function hitungTotalVolume(uid) {
 
 function round2(n) { return Math.round(n * 100) / 100; }
 
+/* Parse isian "Hari Ke-": "1", "3", "1-3", "1,3,5", "1-3,5", "1 sampai 3", "1 s/d 3".
+   Hasil: array hari unik terurut, atau null kalau formatnya tidak valid. Kosong = [1]. */
+const HARI_KE_MAKS = 60;
+function parseHariKe(txt) {
+  let t = String(txt == null ? '' : txt).toLowerCase().trim();
+  if (!t) return [1];
+  t = t.replace(/s\s*\/\s*d|s\.d\.?|sd|sampai|hingga|–|—|~/g, '-').replace(/[;\s]+/g, ',');
+  t = t.replace(/,*-,*/g, '-').replace(/^,+|,+$/g, '');
+  const set = new Set();
+  for (const part of t.split(',')) {
+    if (!part) continue;
+    let m;
+    if ((m = /^(\d+)$/.exec(part))) {
+      set.add(parseInt(m[1], 10));
+    } else if ((m = /^(\d+)-(\d+)$/.exec(part))) {
+      const a = parseInt(m[1], 10), b = parseInt(m[2], 10);
+      if (a > b) return null;
+      for (let d = a; d <= b; d++) set.add(d);
+    } else {
+      return null;
+    }
+    if (set.size > HARI_KE_MAKS) return null;
+  }
+  const arr = Array.from(set);
+  if (!arr.length || arr.some(d => d < 1 || d > HARI_KE_MAKS)) return null;
+  return arr.sort((a, b) => a - b);
+}
+// Ringkas [1,2,3,5] -> "1-3, 5"
+function formatHariKe(arr) {
+  const out = []; let i = 0;
+  while (i < arr.length) {
+    let j = i;
+    while (j + 1 < arr.length && arr[j + 1] === arr[j] + 1) j++;
+    out.push(j > i ? arr[i] + '-' + arr[j] : String(arr[i]));
+    i = j + 1;
+  }
+  return out.join(', ');
+}
+function tanggalUntukHari(base, hari) {
+  const d = new Date(base);
+  d.setDate(d.getDate() + (hari - 1));
+  return d;
+}
+
 function hitungTanggalItem(uid) {
   const base = document.getElementById('f_tanggalMulai').value;
-  const hariKe = parseInt(document.getElementById('hariKe_' + uid).value, 10) || 1;
   const infoEl = document.getElementById('tanggalInfo_' + uid);
   if (!infoEl) return;
+  const hari = parseHariKe(document.getElementById('hariKe_' + uid).value);
+  delete infoEl.dataset.iso;
+  if (!hari) { infoEl.textContent = '⚠️ Format Hari Ke- tidak valid. Contoh: 1  /  1-3  /  1,3,5'; return; }
   if (!base) { infoEl.textContent = '📅 Isi dulu Tanggal & Jam Kemoterapi (Hari ke-1) di atas.'; return; }
-  const baseDate = new Date(base);
-  baseDate.setDate(baseDate.getDate() + (hariKe - 1));
-  infoEl.textContent = '📅 Akan dibuat: ' + baseDate.toLocaleDateString('id-ID') + ' ' +
-    baseDate.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' (Hari ke-' + hariKe + ')';
-  infoEl.dataset.iso = baseDate.toISOString();
+  const fmt = d => d.toLocaleDateString('id-ID') + ' ' + d.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+  if (hari.length === 1) {
+    const d = tanggalUntukHari(base, hari[0]);
+    infoEl.textContent = '📅 Akan dibuat: ' + fmt(d) + ' (Hari ke-' + hari[0] + ')';
+    infoEl.dataset.iso = d.toISOString();
+  } else {
+    infoEl.textContent = '📅 Akan dibuat ' + hari.length + ' etiket (Hari ke-' + formatHariKe(hari) + '): ' +
+      fmt(tanggalUntukHari(base, hari[0])) + ' s/d ' + fmt(tanggalUntukHari(base, hari[hari.length - 1]));
+  }
 }
 function updateAllTanggal() {
   document.querySelectorAll('.regimen-item').forEach(el => hitungTanggalItem(el.getAttribute('data-uid')));
@@ -1266,8 +1316,13 @@ async function simpanEntriBatch() {
       toast(msgBox, 'err', 'Item Obat #' + (i + 1) + ': Nama Obat & Dosis dan Ambil wajib diisi.');
       return;
     }
-    const infoEl = document.getElementById('tanggalInfo_' + uid);
     const merge = i > 0 && !!document.getElementById('merge_' + uid)?.checked;
+    // Item yang digabung (merge) memakai jadwal obat induknya, jadi Hari Ke- miliknya tidak dipakai.
+    const hariList = merge ? null : parseHariKe(document.getElementById('hariKe_' + uid).value);
+    if (!merge && !hariList) {
+      toast(msgBox, 'err', 'Item Obat #' + (i + 1) + ': format Hari Ke- tidak valid. Contoh: 1  /  1-3  /  1,3,5');
+      return;
+    }
     rawItems.push({
       merge,
       srcId: itemEls[i].dataset.srcId || '',
@@ -1280,9 +1335,8 @@ async function simpanEntriBatch() {
       volPelarut: parseFloat(document.getElementById('volPelarut_' + uid).value) || null,
       caraPemberian: document.getElementById('caraPemberian_' + uid).value.trim(),
       pelarut: document.getElementById('pelarut_' + uid).value.trim(),
-      hariKe: parseInt(document.getElementById('hariKe_' + uid).value, 10) || null,
-      budDurasi: parseFloat(document.getElementById('budDurasi_' + uid).value) || 24,
-      tanggalDibuatISO: infoEl?.dataset.iso || isoLocalFromInput(tanggalMulai)
+      hariList,
+      budDurasi: parseFloat(document.getElementById('budDurasi_' + uid).value) || 24
     });
   }
 
@@ -1305,8 +1359,7 @@ async function simpanEntriBatch() {
         obatNama: leader.obatNama, dosisMg: leader.dosisMg, obatDosis: leader.obatDosis,
         ambil: leader.ambil, sediaan: leader.sediaan,
         namaPelarut: leader.namaPelarut, volPelarut: leader.volPelarut, caraPemberian: leader.caraPemberian,
-        pelarut: leader.pelarut, hariKe: leader.hariKe, budDurasi: leader.budDurasi,
-        tanggalDibuatISO: leader.tanggalDibuatISO,
+        pelarut: leader.pelarut, hariList: leader.hariList, budDurasi: leader.budDurasi,
         totalVolumeMl: (parseFloat(leader.ambil) || 0) + (leader.volPelarut || 0),
         detailObat: null
       };
@@ -1320,14 +1373,38 @@ async function simpanEntriBatch() {
       ambil: members.map(m => m.ambil).filter(Boolean).join(' + '),
       sediaan: members.map(m => m.sediaan).filter(Boolean).join(' ; '),
       namaPelarut: leader.namaPelarut, volPelarut: leader.volPelarut, caraPemberian: leader.caraPemberian,
-      pelarut: leader.pelarut, hariKe: leader.hariKe, budDurasi: leader.budDurasi,
-      tanggalDibuatISO: leader.tanggalDibuatISO,
+      pelarut: leader.pelarut, hariList: leader.hariList, budDurasi: leader.budDurasi,
       totalVolumeMl: totalAmbilNum + (leader.volPelarut || 0),
       detailObat: members.map(m => ({
         obatNama: m.obatNama, dosisMg: m.dosisMg, obatDosis: m.obatDosis, ambil: m.ambil, sediaan: m.sediaan
       }))
     };
   });
+
+  // Satu grup obat dengan Hari Ke- "1-3" diperluas menjadi 1 etiket per hari (hari 1, 2, 3).
+  // Baris database asal (editId / srcId) dipasangkan ke hari yang sama dengan hari_ke aslinya
+  // kalau hari itu masih ada di daftar; kalau tidak, ke hari pertama.
+  const editIdAwal = document.getElementById('regimenContainer').dataset.editId;
+  const groupItems = items;
+  const items2 = [];
+  groupItems.forEach((g, gi) => {
+    const srcRow = (editIdAwal && gi === 0)
+      ? CACHE.etiket.find(e => e.id === editIdAwal)
+      : (g.srcId ? CACHE.etiket.find(e => e.id === g.srcId) : null);
+    const srcHari = srcRow ? parseInt(srcRow.hari_ke, 10) : NaN;
+    const primaryHari = g.hariList.includes(srcHari) ? srcHari : g.hariList[0];
+    g.hariList.forEach(h => {
+      items2.push({
+        ...g,
+        hariKe: h,
+        tanggalDibuatISO: tanggalUntukHari(tanggalMulai, h).toISOString(),
+        srcId: h === primaryHari ? g.srcId : '',
+        isEditTarget: !!(editIdAwal && gi === 0 && h === primaryHari)
+      });
+    });
+  });
+  items.length = 0;
+  items2.forEach(x => items.push(x));
 
   // 1) upsert pasien
   await supabase.from('pasien').upsert({ no_rm: noRM, nama_pasien: namaPasien, tanggal_lahir: tanggalLahir, updated_at: new Date().toISOString() });
@@ -1361,7 +1438,7 @@ async function simpanEntriBatch() {
   for (let idx = 0; idx < items.length; idx++) {
     const it = items[idx];
     let existing = null;
-    if (editId && idx === 0) {
+    if (editId && it.isEditTarget) {
       existing = CACHE.etiket.find(e => e.id === editId);
     } else {
       existing = CACHE.etiket.find(e =>
