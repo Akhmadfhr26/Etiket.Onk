@@ -1707,6 +1707,7 @@ function renderTpnDashboard(content) {
         <div class="spacer"></div>
         <button class="btn secondary" onclick="navigate('tpn_entri')">➕ Entri TPN Baru</button>
         <button class="btn" onclick="cetakTerpilihTpn()">🏷️ Cetak Etiket TPN</button>
+        <button class="btn" onclick="bukaSerahTerimaTpn()" title="Bukti serah terima TPN: etiket yang dicentang, atau sesuai tanggal yang dipilih bila tidak ada yang dicentang">📄 Bukti Serah Terima</button>
         <button class="btn danger" onclick="hapusTerpilihTpn()">🗑️ Hapus Terpilih</button>
       </div>
       <div class="chip-row" id="tpnDateChips">
@@ -1781,6 +1782,13 @@ function toggleAllRowsTpn(cb) {
 }
 function getCheckedIdsTpn() {
   return Array.from(document.querySelectorAll('.row-check-tpn:checked')).map(c => c.value);
+}
+
+function bukaSerahTerimaTpn() {
+  const ids = getCheckedIdsTpn();
+  if (ids.length) { window.open('print/serah-terima.html?jenis=tpn&ids=' + encodeURIComponent(ids.join(',')), '_blank'); return; }
+  const key = window._activeDateFilterTpn || localDateKey(new Date());
+  window.open('print/serah-terima.html?jenis=tpn&date=' + encodeURIComponent(key), '_blank');
 }
 
 function cetakTerpilihTpn() {
