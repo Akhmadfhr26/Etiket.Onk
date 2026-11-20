@@ -380,6 +380,8 @@ function renderDashFilters() {
       <span class="filter-label">Tanggal</span>
       ${rng('today', 'Hari ini')}${rng('tomorrow', 'Besok')}${rng('week', '7 hari ke depan')}${rng('all', 'Semua')}
       <input type="date" class="date-chip ${d.range === 'date' ? 'active' : ''}" value="${escapeHtml(d.date || '')}" onchange="setDashDate(this.value)" title="Pilih tanggal tertentu">
+      <span class="spacer"></span>
+      <button class="btn ghost small" onclick="bukaSerahTerima()" title="Dokumen bukti serah terima: nama pasien, obat &amp; dosis, ceklist (sesuai tanggal yang dipilih)">📄 Bukti Serah Terima</button>
     </div>
     ${printOn ? `
     <div class="filter-line">
@@ -643,6 +645,7 @@ function updateSelBar() {
       ` : `
         <button class="btn" onclick="cetakTerpilih('label')">🏷️ Cetak Label Obat</button>
         <button class="btn" onclick="cetakTerpilih('identitas')">🪪 Cetak Label Identitas</button>
+        <button class="btn" onclick="bukaSerahTerima(true)" title="Bukti serah terima khusus etiket yang dicentang">📄 Bukti Serah Terima</button>
         ${printOn ? `<select onchange="tandaiCetakTerpilih(this.value); this.value='';" title="Ubah status cetak etiket terpilih secara manual">
           <option value="">Tandai…</option>
           <option value="sudah">✔ Sudah dicetak</option>
@@ -660,6 +663,21 @@ function cetakTerpilih(jenis) {
   if (!ids.length) { alert('Pilih minimal satu etiket dulu (centang di tabel).'); return; }
   const page = jenis === 'identitas' ? 'print/label-identitas.html' : 'print/label.html';
   window.open(page + '?ids=' + encodeURIComponent(ids.join(',')), '_blank');
+}
+
+/* Bukti serah terima: dokumen per tanggal (semua etiket tanggal itu, dikelompokkan per pasien)
+   atau, bila dipanggil dengan dariPilihan=true, hanya etiket yang dicentang. */
+function bukaSerahTerima(dariPilihan) {
+  if (dariPilihan) {
+    const ids = Array.from(window._sel.kemo);
+    if (!ids.length) { alert('Pilih minimal satu etiket dulu (centang di tabel).'); return; }
+    window.open('print/serah-terima.html?ids=' + encodeURIComponent(ids.join(',')), '_blank');
+    return;
+  }
+  const d = window._dash || {};
+  const today = localDateKey(new Date());
+  const key = d.range === 'tomorrow' ? addDaysKey(today, 1) : (d.range === 'date' && d.date ? d.date : today);
+  window.open('print/serah-terima.html?date=' + encodeURIComponent(key), '_blank');
 }
 
 function cetakTerpilihObat() {
