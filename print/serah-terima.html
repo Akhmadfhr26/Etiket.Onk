@@ -35,6 +35,10 @@
   .ttd td { width: 50%; text-align: center; vertical-align: top; padding: 2px 6px; font-size: 10pt; }
   .ttd .space { height: 22mm; }
   .ttd .line { border-top: 1px solid #000; display: inline-block; min-width: 55mm; padding-top: 2px; }
+  .noprint { }
+  .hapus { float: right; cursor: pointer; font-weight: normal; font-size: 8.5pt; color: #b00020; border: 1px solid #b00020; border-radius: 3px; padding: 0 5px; background: #fff; }
+  .hapus-r { cursor: pointer; color: #b00020; font-size: 10pt; }
+  .excl { width: 100%; font-size: 12px; color: #b00020; }
   .empty-note { padding: 30px; text-align: center; font-size: 11pt; }
 
   /* bar kontrol (hanya layar) */
@@ -47,7 +51,7 @@
   .bar .hint { width: 100%; color: #666; font-size: 11.5px; }
   @media print {
     body { background: #fff; }
-    .bar { display: none !important; }
+    .bar, .noprint { display: none !important; }
     .sheet { margin: 0; padding: 0; width: auto; min-height: 0; box-shadow: none; }
   }
 </style>
@@ -65,6 +69,7 @@
   <span class="grow"></span>
   <button onclick="window.print()">🖨️ Cetak / Simpan PDF</button>
   <button onclick="unduhWord()">📄 Unduh Word (.doc)</button>
+  <div class="excl" id="excl"></div>
   <div class="hint" id="hint">Untuk PDF: pilih <b>Destination → Save as PDF</b> pada jendela cetak. Ukuran kertas A4.</div>
 </div>
 <div class="sheet" id="sheet"><div class="empty-note">Memuat data...</div></div>
@@ -99,7 +104,8 @@ function addDays(key,n){ const [y,m,d]=key.split('-').map(Number); return dateKe
 const params = new URLSearchParams(location.search);
 const IDS = (params.get('ids')||'').split(',').filter(Boolean);
 let SETTINGS = {};
-let LAST = { key:'', rows:[] };
+let LAST = { key:'', rows:[], tgl:'', sumber:'' };
+let EXC_P = new Set(), EXC_R = new Set(); // pasien / regimen yang dikeluarkan dari dokumen (hanya di layar, tidak mengubah database)
 
 async function ambilData(key, basis){
   // Ambil dengan rentang longgar (±2 hari) lalu saring tanggal LOKAL di sisi klien (hindari selisih zona waktu WITA/UTC)
@@ -114,7 +120,8 @@ async function ambilData(key, basis){
   });
 }
 
-function bangunDokumen(rows, key, judulSumber){
+function bangunDokumen(allRows, key, judulSumber){
+  const rows = allRows.filter(r => !EXC_P.has(String(r.no_rm || r.nama_pasien || '-')) && !EXC_R.has(String(r.id)));
   const rs = SETTINGS.nama_rs || 'RSUD AM PARIKESIT';
   const unit = SETTINGS.sub_judul || 'INSTALASI FARMASI - UNIT DISPENSING STERIL';
   if (!rows.length) {
@@ -124,7 +131,7 @@ function bangunDokumen(rows, key, judulSumber){
   const map = new Map();
   rows.forEach(r => {
     const k = String(r.no_rm || r.nama_pasien || '-');
-    if (!map.has(k)) map.set(k, { nama:r.nama_pasien, rm:r.no_rm, lahir:r.tanggal_lahir, lokasi:r.lokasi, rows:[] });
+    if (!map.has(k)) map.set(k, { key:k, nama:r.nama_pasien, rm:r.no_rm, lahir:r.tanggal_lahir, lokasi:r.lokasi, rows:[] });
     const g = map.get(k);
     if (!g.lokasi && r.lokasi) g.lokasi = r.lokasi;
     g.rows.push(r);
@@ -136,7 +143,7 @@ function bangunDokumen(rows, key, judulSumber){
   const tabel = groups.map((g,i) => `
     <table class="pasien">
       <colgroup><col style="width:7mm"><col><col style="width:42mm"><col style="width:20mm"><col style="width:20mm"><col style="width:24mm"></colgroup>
-      <tr class="ph"><td colspan="6">${i+1}. ${esc(g.nama)} <span class="sub">&nbsp;|&nbsp; No. RM ${esc(g.rm||'-')}${g.lahir ? ' &nbsp;|&nbsp; Lahir: '+esc(fmtDate(g.lahir)) : ''}${g.lokasi ? ' &nbsp;|&nbsp; Ruang: '+esc(g.lokasi) : ''}</span></td></tr>
+      <tr class="ph"><td colspan="6"><span class="hapus noprint" data-hp="${esc(encodeURIComponent(g.key))}" title="Hapus pasien ini dari dokumen (mis. batal kemo)">✕ Hapus pasien</span>${i+1}. ${esc(g.nama)} <span class="sub">&nbsp;|&nbsp; No. RM ${esc(g.rm||'-')}${g.lahir ? ' &nbsp;|&nbsp; Lahir: '+esc(fmtDate(g.lahir)) : ''}${g.lokasi ? ' &nbsp;|&nbsp; Ruang: '+esc(g.lokasi) : ''}</span></td></tr>
       <tr class="ch"><th>No</th><th>Nama Obat &amp; Dosis</th><th>Pelarut / BUD</th><th>Diserahkan<br>(Farmasi)</th><th>Diterima<br>(Perawat)</th><th>Ket.</th></tr>
       ${g.rows.map((r,j) => `
       <tr>
@@ -145,7 +152,7 @@ function bangunDokumen(rows, key, judulSumber){
         <td class="small">${esc(r.pelarut||'')}${computeBud(r) ? '<br>BUD: '+esc(computeBud(r)) : ''}</td>
         <td class="box">${BOX}</td>
         <td class="box">${BOX}</td>
-        <td></td>
+        <td class="c"><span class="hapus-r noprint" data-hr="${esc(r.id)}" title="Hapus regimen ini dari dokumen">✕</span></td>
       </tr>`).join('')}
     </table>`).join('');
 
@@ -187,14 +194,34 @@ async function render(){
       rows = await ambilData(key, basis);
       sumber = basis === 'cetak' ? 'etiket yang ditandai dicetak pada tanggal tersebut' : 'etiket tanggal ' + fmtDate(key + 'T00:00:00');
     }
-    LAST = { key, rows };
     const tgl = (IDS.length && !window._abaikanIds && rows.length) ? (dateKey(rows[0].tanggal_dibuat) || key) : key;
-    sheet.innerHTML = bangunDokumen(rows, tgl, sumber);
-    document.title = 'BuktiSerahTerima_' + tgl;
+    LAST = { key, rows, tgl, sumber };
+    EXC_P = new Set(); EXC_R = new Set();
+    draw();
   } catch (e) {
     sheet.innerHTML = '<div class="empty-note">Gagal memuat data: ' + esc(e.message || e) + '</div>';
   }
 }
+function draw(){
+  document.getElementById('sheet').innerHTML = bangunDokumen(LAST.rows, LAST.tgl, LAST.sumber);
+  document.title = 'BuktiSerahTerima_' + LAST.tgl;
+  const n = EXC_P.size + EXC_R.size;
+  document.getElementById('excl').innerHTML = n
+    ? `✕ ${EXC_P.size} pasien dan ${EXC_R.size} regimen dikeluarkan dari dokumen (data di aplikasi tidak berubah). <a href="#" onclick="kembalikanSemua();return false;">Kembalikan semua</a>`
+    : '';
+}
+function kembalikanSemua(){ EXC_P.clear(); EXC_R.clear(); draw(); }
+document.addEventListener('click', e => {
+  const hp = e.target.closest('[data-hp]'), hr = e.target.closest('[data-hr]');
+  if (hp) {
+    const k = decodeURIComponent(hp.dataset.hp);
+    const g = LAST.rows.find(r => String(r.no_rm || r.nama_pasien || '-') === k);
+    if (!confirm('Hapus ' + (g ? g.nama_pasien : 'pasien ini') + ' dari bukti serah terima?\n(Hanya dari dokumen ini; data etiket tidak dihapus.)')) return;
+    EXC_P.add(k); draw();
+  } else if (hr) {
+    EXC_R.add(decodeURIComponent(hr.dataset.hr)); draw();
+  }
+});
 function muatUlang(){ window._abaikanIds = true; render(); }
 
 function unduhWord(){
@@ -204,7 +231,7 @@ function unduhWord(){
     + '<head><meta charset="utf-8"><title>Bukti Serah Terima</title>'
     + '<!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View><w:Zoom>100</w:Zoom></w:WordDocument></xml><![endif]-->'
     + '<style>' + style + ' .sheet{box-shadow:none;margin:0;padding:0;width:auto}</style></head>'
-    + '<body><div class="sheet">' + document.getElementById('sheet').innerHTML + '</div></body></html>';
+    + '<body><div class="sheet">' + (() => { const c = document.getElementById('sheet').cloneNode(true); c.querySelectorAll('.noprint').forEach(x => x.remove()); return c.innerHTML; })() + '</div></body></html>';
   const blob = new Blob(['﻿', html], { type: 'application/msword' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
