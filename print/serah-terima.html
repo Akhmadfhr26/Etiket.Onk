@@ -58,6 +58,7 @@
 </head>
 <body>
 <div class="bar" id="bar">
+  <label>Jenis <select id="fJenis" onchange="ubahJenis()"><option value="kemo">Etiket Kemo (infus)</option><option value="tpn">Etiket TPN</option></select></label>
   <label>Tanggal <input type="date" id="fTanggal"></label>
   <label id="lblBasis">Berdasarkan
     <select id="fBasis">
@@ -99,20 +100,34 @@ function obatDosisText(d){
   if (!t) t = [d.nama_obat, (d.dosis_mg!=null && d.dosis_mg!=='') ? d.dosis_mg+' mg' : ''].filter(Boolean).join(' ');
   return t;
 }
+function totalVolumeTpn(kom){
+  if (!Array.isArray(kom) || !kom.length) return '';
+  let total = 0, count = 0;
+  kom.forEach(k => { const m = /^(-?\d+(?:[.,]\d+)?)/.exec(String(k.volume||'').trim()); if (!m) return;
+    const n = parseFloat(m[1].replace(',','.')); if (!isNaN(n)) { total += n; count++; } });
+  return count ? (Math.round(total*100)/100) + ' mL' : '';
+}
+function ubahJenis(){
+  const j = document.getElementById('fJenis').value;
+  document.getElementById('lblBasis').style.display = (j === 'kemo' && HAS_CETAK.v) ? '' : 'none';
+  if (j === 'tpn') document.getElementById('fBasis').value = 'etiket';
+}
 function addDays(key,n){ const [y,m,d]=key.split('-').map(Number); return dateKey(new Date(y,m-1,d+n)); }
 
 const params = new URLSearchParams(location.search);
+const HAS_CETAK = { v: true };
 const IDS = (params.get('ids')||'').split(',').filter(Boolean);
 let SETTINGS = {};
 let LAST = { key:'', rows:[], tgl:'', sumber:'' };
 let EXC_P = new Set(), EXC_R = new Set(); // pasien / regimen yang dikeluarkan dari dokumen (hanya di layar, tidak mengubah database)
 
-async function ambilData(key, basis){
+async function ambilData(key, basis, jenis){
+  const tabel = jenis === 'tpn' ? 'etiket_tpn' : 'etiket';
   // Ambil dengan rentang longgar (±2 hari) lalu saring tanggal LOKAL di sisi klien (hindari selisih zona waktu WITA/UTC)
   const from = new Date(addDays(key,-2)+'T00:00:00').toISOString();
   const to   = new Date(addDays(key,3)+'T00:00:00').toISOString();
   const kolom = basis === 'cetak' ? 'dicetak_at' : 'tanggal_dibuat';
-  const { data, error } = await supabase.from('etiket').select('*').gte(kolom, from).lt(kolom, to);
+  const { data, error } = await supabase.from(tabel).select('*').gte(kolom, from).lt(kolom, to);
   if (error) throw error;
   return (data||[]).filter(r => {
     if (basis === 'cetak') return dateKey(r.dicetak_at) === key;
@@ -120,12 +135,13 @@ async function ambilData(key, basis){
   });
 }
 
-function bangunDokumen(allRows, key, judulSumber){
+function bangunDokumen(allRows, key, judulSumber, jenis){
+  const TPN = jenis === 'tpn';
   const rows = allRows.filter(r => !EXC_P.has(String(r.no_rm || r.nama_pasien || '-')) && !EXC_R.has(String(r.id)));
   const rs = SETTINGS.nama_rs || 'RSUD AM PARIKESIT';
   const unit = SETTINGS.sub_judul || 'INSTALASI FARMASI - UNIT DISPENSING STERIL';
   if (!rows.length) {
-    return `<div class="empty-note">Tidak ada etiket untuk ${esc(judulSumber)}.</div>`;
+    return `<div class="empty-note">Tidak ada etiket ${TPN ? 'TPN ' : ''}untuk ${esc(judulSumber)}.</div>`;
   }
   // kelompok per pasien
   const map = new Map();
@@ -144,12 +160,14 @@ function bangunDokumen(allRows, key, judulSumber){
     <table class="pasien">
       <colgroup><col style="width:7mm"><col><col style="width:42mm"><col style="width:20mm"><col style="width:20mm"><col style="width:24mm"></colgroup>
       <tr class="ph"><td colspan="6"><span class="hapus noprint" data-hp="${esc(encodeURIComponent(g.key))}" title="Hapus pasien ini dari dokumen (mis. batal kemo)">✕ Hapus pasien</span>${i+1}. ${esc(g.nama)} <span class="sub">&nbsp;|&nbsp; No. RM ${esc(g.rm||'-')}${g.lahir ? ' &nbsp;|&nbsp; Lahir: '+esc(fmtDate(g.lahir)) : ''}${g.lokasi ? ' &nbsp;|&nbsp; Ruang: '+esc(g.lokasi) : ''}</span></td></tr>
-      <tr class="ch"><th>No</th><th>Nama Obat &amp; Dosis</th><th>Pelarut / BUD</th><th>Diserahkan<br>(Farmasi)</th><th>Diterima<br>(Perawat)</th><th>Ket.</th></tr>
+      <tr class="ch"><th>No</th><th>${TPN ? 'Komposisi TPN' : 'Nama Obat &amp; Dosis'}</th><th>${TPN ? 'Total Vol. / BUD' : 'Pelarut / BUD'}</th><th>Diserahkan<br>(Farmasi)</th><th>Diterima<br>(Perawat)</th><th>Ket.</th></tr>
       ${g.rows.map((r,j) => `
       <tr>
         <td class="c">${j+1}</td>
-        <td>${r.hari_ke ? `<span class="badge">H-${esc(r.hari_ke)}</span>` : ''}<span class="obat">${esc(obatDosisText(r))}</span></td>
-        <td class="small">${esc(r.pelarut||'')}${computeBud(r) ? '<br>BUD: '+esc(computeBud(r)) : ''}</td>
+        ${TPN ? `<td><span class="badge">TPN</span>${(Array.isArray(r.komposisi)?r.komposisi:[]).map(k => `<div><span class="obat">${esc(k.nama)}</span> : ${esc(k.volume)}</div>`).join('')}</td>
+        <td class="small">${totalVolumeTpn(r.komposisi) ? 'Total: '+esc(totalVolumeTpn(r.komposisi)) : ''}${computeBud(r) ? '<br>BUD: '+esc(computeBud(r)) : ''}</td>`
+        : `<td>${r.hari_ke ? `<span class="badge">H-${esc(r.hari_ke)}</span>` : ''}<span class="obat">${esc(obatDosisText(r))}</span></td>
+        <td class="small">${esc(r.pelarut||'')}${computeBud(r) ? '<br>BUD: '+esc(computeBud(r)) : ''}</td>`}
         <td class="box">${BOX}</td>
         <td class="box">${BOX}</td>
         <td class="c"><span class="hapus-r noprint" data-hr="${esc(r.id)}" title="Hapus regimen ini dari dokumen">✕</span></td>
@@ -164,10 +182,10 @@ function bangunDokumen(allRows, key, judulSumber){
       <div class="rs">${esc(rs)}</div>
       <div class="unit">${esc(unit)}</div>
     </div>
-    <h1 class="judul">BUKTI SERAH TERIMA SEDIAAN KEMOTERAPI</h1>
+    <h1 class="judul">BUKTI SERAH TERIMA SEDIAAN ${TPN ? 'TPN' : 'KEMOTERAPI'}</h1>
     <table class="meta">
       <tr><td class="k">Tanggal</td><td>: ${esc(fmtLong(key))}</td><td class="k">Jumlah pasien</td><td>: ${totalPasien}</td></tr>
-      <tr><td class="k">Dasar data</td><td>: ${esc(judulSumber)}</td><td class="k">Jumlah regimen</td><td>: ${totalReg}</td></tr>
+      <tr><td class="k">Dasar data</td><td>: ${esc(judulSumber)}</td><td class="k">${TPN ? 'Jumlah etiket' : 'Jumlah regimen'}</td><td>: ${totalReg}</td></tr>
     </table>
     ${tabel}
     <table class="ttd">
@@ -182,20 +200,22 @@ async function render(){
   const sheet = document.getElementById('sheet');
   const key = document.getElementById('fTanggal').value;
   const basis = document.getElementById('fBasis').value;
+  const jenis = document.getElementById('fJenis').value;
+  const tabel = jenis === 'tpn' ? 'etiket_tpn' : 'etiket';
   try {
     let rows, sumber;
     if (IDS.length && !window._abaikanIds) {
-      const { data, error } = await supabase.from('etiket').select('*').in('id', IDS);
+      const { data, error } = await supabase.from(tabel).select('*').in('id', IDS);
       if (error) throw error;
       rows = data || [];
       sumber = rows.length + ' etiket yang dipilih';
       document.getElementById('hint').innerHTML = 'Mode: <b>etiket terpilih</b> dari Daftar Etiket. <a href="#" onclick="window._abaikanIds=true;render();return false;">Ganti ke per tanggal</a> · Untuk PDF pilih <b>Destination → Save as PDF</b>.';
     } else {
-      rows = await ambilData(key, basis);
+      rows = await ambilData(key, jenis === 'tpn' ? 'etiket' : basis, jenis);
       sumber = basis === 'cetak' ? 'etiket yang ditandai dicetak pada tanggal tersebut' : 'etiket tanggal ' + fmtDate(key + 'T00:00:00');
     }
     const tgl = (IDS.length && !window._abaikanIds && rows.length) ? (dateKey(rows[0].tanggal_dibuat) || key) : key;
-    LAST = { key, rows, tgl, sumber };
+    LAST = { key, rows, tgl, sumber, jenis };
     EXC_P = new Set(); EXC_R = new Set();
     draw();
   } catch (e) {
@@ -203,8 +223,8 @@ async function render(){
   }
 }
 function draw(){
-  document.getElementById('sheet').innerHTML = bangunDokumen(LAST.rows, LAST.tgl, LAST.sumber);
-  document.title = 'BuktiSerahTerima_' + LAST.tgl;
+  document.getElementById('sheet').innerHTML = bangunDokumen(LAST.rows, LAST.tgl, LAST.sumber, LAST.jenis);
+  document.title = 'BuktiSerahTerima_' + (LAST.jenis === 'tpn' ? 'TPN_' : '') + LAST.tgl;
   const n = EXC_P.size + EXC_R.size;
   document.getElementById('excl').innerHTML = n
     ? `✕ ${EXC_P.size} pasien dan ${EXC_R.size} regimen dikeluarkan dari dokumen (data di aplikasi tidak berubah). <a href="#" onclick="kembalikanSemua();return false;">Kembalikan semua</a>`
@@ -250,14 +270,16 @@ function unduhWord(){
   (st||[]).forEach(r => SETTINGS[r.key] = r.value);
 
   document.getElementById('fTanggal').value = params.get('date') || dateKey(new Date());
+  if (params.get('jenis') === 'tpn') document.getElementById('fJenis').value = 'tpn';
   const b = params.get('basis');
   if (b === 'cetak') document.getElementById('fBasis').value = 'cetak';
   // Opsi "tanggal dicetak" hanya berguna bila kolom dicetak_at sudah ada di database
   const probe = await supabase.from('etiket').select('dicetak_at').limit(1);
   if (probe.error) {
-    document.getElementById('lblBasis').style.display = 'none';
+    HAS_CETAK.v = false;
     document.getElementById('fBasis').value = 'etiket';
   }
+  ubahJenis();
   render();
 })();
 </script>
