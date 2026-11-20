@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<title>Bukti Serah Terima</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style id="docStyle">
+  @page { size: A4 portrait; margin: 12mm 12mm 14mm 12mm; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: Tahoma, Verdana, "Segoe UI", Arial, Helvetica, sans-serif;
+    font-size: 10pt; color: #000; background: #eef0f3;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .sheet { width: 210mm; min-height: 297mm; margin: 12px auto; padding: 12mm; background: #fff; box-shadow: 0 1px 6px rgba(0,0,0,.18); }
+  .kop { text-align: center; border-bottom: 2px solid #000; padding-bottom: 5px; margin-bottom: 8px; }
+  .kop .rs { font-size: 13pt; font-weight: bold; }
+  .kop .unit { font-size: 9pt; }
+  h1.judul { font-size: 12.5pt; text-align: center; margin: 8px 0 2px; letter-spacing: .02em; }
+  .meta { width: 100%; border-collapse: collapse; margin: 6px 0 10px; font-size: 9.5pt; }
+  .meta td { padding: 1px 4px; vertical-align: top; }
+  .meta .k { width: 28mm; }
+  table.pasien { width: 100%; border-collapse: collapse; margin: 0 0 9px; page-break-inside: avoid; break-inside: avoid; }
+  table.pasien th, table.pasien td { border: 1px solid #000; padding: 3px 5px; vertical-align: middle; font-size: 9.5pt; }
+  table.pasien tr.ph td { background: #e6e6e6; font-weight: bold; font-size: 10pt; }
+  table.pasien tr.ph .sub { font-weight: normal; font-size: 9pt; }
+  table.pasien tr.ch th { background: #f3f3f3; font-size: 8.5pt; text-align: center; }
+  td.c { text-align: center; }
+  td.box { text-align: center; font-size: 15pt; line-height: 1; font-family: "Segoe UI Symbol", "DejaVu Sans", Arial, sans-serif; }
+  .obat { font-weight: bold; }
+  .small { font-size: 8.5pt; color: #333; }
+  .badge { font-size: 8pt; border: 1px solid #000; border-radius: 3px; padding: 0 3px; margin-right: 3px; }
+  .ttd { width: 100%; border-collapse: collapse; margin-top: 14px; page-break-inside: avoid; break-inside: avoid; }
+  .ttd td { width: 50%; text-align: center; vertical-align: top; padding: 2px 6px; font-size: 10pt; }
+  .ttd .space { height: 22mm; }
+  .ttd .line { border-top: 1px solid #000; display: inline-block; min-width: 55mm; padding-top: 2px; }
+  .empty-note { padding: 30px; text-align: center; font-size: 11pt; }
+
+  /* bar kontrol (hanya layar) */
+  .bar { max-width: 210mm; margin: 12px auto 0; padding: 10px 12px; background: #fff; border-radius: 6px; box-shadow: 0 1px 6px rgba(0,0,0,.12);
+         font-family: Arial, sans-serif; font-size: 13px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .bar label { color: #444; }
+  .bar input, .bar select { font-size: 13px; padding: 4px 6px; }
+  .bar button { font-size: 13px; padding: 6px 12px; cursor: pointer; }
+  .bar .grow { flex: 1; }
+  .bar .hint { width: 100%; color: #666; font-size: 11.5px; }
+  @media print {
+    body { background: #fff; }
+    .bar { display: none !important; }
+    .sheet { margin: 0; padding: 0; width: auto; min-height: 0; box-shadow: none; }
+  }
+</style>
+</head>
+<body>
+<div class="bar" id="bar">
+  <label>Tanggal <input type="date" id="fTanggal"></label>
+  <label id="lblBasis">Berdasarkan
+    <select id="fBasis">
+      <option value="etiket">Tanggal etiket</option>
+      <option value="cetak">Tanggal dicetak (status cetak)</option>
+    </select>
+  </label>
+  <button onclick="muatUlang()">Tampilkan</button>
+  <span class="grow"></span>
+  <button onclick="window.print()">🖨️ Cetak / Simpan PDF</button>
+  <button onclick="unduhWord()">📄 Unduh Word (.doc)</button>
+  <div class="hint" id="hint">Untuk PDF: pilih <b>Destination → Save as PDF</b> pada jendela cetak. Ukuran kertas A4.</div>
+</div>
+<div class="sheet" id="sheet"><div class="empty-note">Memuat data...</div></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../js/supabaseClient.js"></script>
+<script>
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function pad(n){return String(n).padStart(2,'0');}
+function dateKey(d){ if(!d) return ''; const dt=new Date(d); if(isNaN(dt.getTime())) return '';
+  return dt.getFullYear()+'-'+pad(dt.getMonth()+1)+'-'+pad(dt.getDate()); }
+function fmtDate(d){ if(!d) return ''; const dt=new Date(d); if(isNaN(dt.getTime())) return String(d); return dt.toLocaleDateString('id-ID'); }
+function fmtDateTime(d){ if(!d) return ''; const dt=new Date(d); if(isNaN(dt.getTime())) return String(d);
+  return dt.toLocaleDateString('id-ID')+' '+dt.toLocaleTimeString('id-ID',{hour:'2-digit',minute:'2-digit'}); }
+function fmtLong(key){ if(!key) return '-'; const [y,m,d]=key.split('-').map(Number);
+  return new Date(y,m-1,d).toLocaleDateString('id-ID',{weekday:'long',day:'numeric',month:'long',year:'numeric'}); }
+function computeBud(item){
+  if (item.tanggal_bud) return fmtDateTime(item.tanggal_bud);
+  if (item.tanggal_dibuat && item.bud_durasi_jam){
+    return fmtDateTime(new Date(new Date(item.tanggal_dibuat).getTime()+parseFloat(item.bud_durasi_jam)*3600000).toISOString());
+  }
+  return '';
+}
+// Teks obat & dosis seperti yang tercetak di etiket (kata "Injeksi" dibuang, sama seperti label.html)
+function obatDosisText(d){
+  let t = String(d.obat_dosis||'').replace(/\bInjeksi\b\s*/gi,'').replace(/\s{2,}/g,' ').trim();
+  if (!t) t = [d.nama_obat, (d.dosis_mg!=null && d.dosis_mg!=='') ? d.dosis_mg+' mg' : ''].filter(Boolean).join(' ');
+  return t;
+}
+function addDays(key,n){ const [y,m,d]=key.split('-').map(Number); return dateKey(new Date(y,m-1,d+n)); }
+
+const params = new URLSearchParams(location.search);
+const IDS = (params.get('ids')||'').split(',').filter(Boolean);
+let SETTINGS = {};
+let LAST = { key:'', rows:[] };
+
+async function ambilData(key, basis){
+  // Ambil dengan rentang longgar (±2 hari) lalu saring tanggal LOKAL di sisi klien (hindari selisih zona waktu WITA/UTC)
+  const from = new Date(addDays(key,-2)+'T00:00:00').toISOString();
+  const to   = new Date(addDays(key,3)+'T00:00:00').toISOString();
+  const kolom = basis === 'cetak' ? 'dicetak_at' : 'tanggal_dibuat';
+  const { data, error } = await supabase.from('etiket').select('*').gte(kolom, from).lt(kolom, to);
+  if (error) throw error;
+  return (data||[]).filter(r => {
+    if (basis === 'cetak') return dateKey(r.dicetak_at) === key;
+    return dateKey(r.tanggal_dibuat) === key;
+  });
+}
+
+function bangunDokumen(rows, key, judulSumber){
+  const rs = SETTINGS.nama_rs || 'RSUD AM PARIKESIT';
+  const unit = SETTINGS.sub_judul || 'INSTALASI FARMASI - UNIT DISPENSING STERIL';
+  if (!rows.length) {
+    return `<div class="empty-note">Tidak ada etiket untuk ${esc(judulSumber)}.</div>`;
+  }
+  // kelompok per pasien
+  const map = new Map();
+  rows.forEach(r => {
+    const k = String(r.no_rm || r.nama_pasien || '-');
+    if (!map.has(k)) map.set(k, { nama:r.nama_pasien, rm:r.no_rm, lahir:r.tanggal_lahir, lokasi:r.lokasi, rows:[] });
+    const g = map.get(k);
+    if (!g.lokasi && r.lokasi) g.lokasi = r.lokasi;
+    g.rows.push(r);
+  });
+  const groups = Array.from(map.values()).sort((a,b)=> String(a.lokasi||'').localeCompare(String(b.lokasi||''),'id') || String(a.nama||'').localeCompare(String(b.nama||''),'id'));
+  groups.forEach(g => g.rows.sort((a,b)=> (new Date(a.tanggal_dibuat)-new Date(b.tanggal_dibuat)) || ((a.hari_ke||0)-(b.hari_ke||0)) || String(a.id).localeCompare(String(b.id),undefined,{numeric:true})));
+
+  const BOX = '&#9744;'; // ☐
+  const tabel = groups.map((g,i) => `
+    <table class="pasien">
+      <colgroup><col style="width:7mm"><col><col style="width:42mm"><col style="width:20mm"><col style="width:20mm"><col style="width:24mm"></colgroup>
+      <tr class="ph"><td colspan="6">${i+1}. ${esc(g.nama)} <span class="sub">&nbsp;|&nbsp; No. RM ${esc(g.rm||'-')}${g.lahir ? ' &nbsp;|&nbsp; Lahir: '+esc(fmtDate(g.lahir)) : ''}${g.lokasi ? ' &nbsp;|&nbsp; Ruang: '+esc(g.lokasi) : ''}</span></td></tr>
+      <tr class="ch"><th>No</th><th>Nama Obat &amp; Dosis</th><th>Pelarut / BUD</th><th>Diserahkan<br>(Farmasi)</th><th>Diterima<br>(Perawat)</th><th>Ket.</th></tr>
+      ${g.rows.map((r,j) => `
+      <tr>
+        <td class="c">${j+1}</td>
+        <td>${r.hari_ke ? `<span class="badge">H-${esc(r.hari_ke)}</span>` : ''}<span class="obat">${esc(obatDosisText(r))}</span></td>
+        <td class="small">${esc(r.pelarut||'')}${computeBud(r) ? '<br>BUD: '+esc(computeBud(r)) : ''}</td>
+        <td class="box">${BOX}</td>
+        <td class="box">${BOX}</td>
+        <td></td>
+      </tr>`).join('')}
+    </table>`).join('');
+
+  const totalPasien = groups.length;
+  const totalReg = rows.length;
+
+  return `
+    <div class="kop">
+      <div class="rs">${esc(rs)}</div>
+      <div class="unit">${esc(unit)}</div>
+    </div>
+    <h1 class="judul">BUKTI SERAH TERIMA SEDIAAN KEMOTERAPI</h1>
+    <table class="meta">
+      <tr><td class="k">Tanggal</td><td>: ${esc(fmtLong(key))}</td><td class="k">Jumlah pasien</td><td>: ${totalPasien}</td></tr>
+      <tr><td class="k">Dasar data</td><td>: ${esc(judulSumber)}</td><td class="k">Jumlah regimen</td><td>: ${totalReg}</td></tr>
+    </table>
+    ${tabel}
+    <table class="ttd">
+      <tr><td>Yang menyerahkan (Farmasi)</td><td>Yang menerima (Perawat)</td></tr>
+      <tr><td class="space"></td><td class="space"></td></tr>
+      <tr><td><span class="line">Nama / TTD</span><br><span class="small">Tanggal/jam: ........................</span></td>
+          <td><span class="line">Nama / TTD</span><br><span class="small">Tanggal/jam: ........................</span></td></tr>
+    </table>`;
+}
+
+async function render(){
+  const sheet = document.getElementById('sheet');
+  const key = document.getElementById('fTanggal').value;
+  const basis = document.getElementById('fBasis').value;
+  try {
+    let rows, sumber;
+    if (IDS.length && !window._abaikanIds) {
+      const { data, error } = await supabase.from('etiket').select('*').in('id', IDS);
+      if (error) throw error;
+      rows = data || [];
+      sumber = rows.length + ' etiket yang dipilih';
+      document.getElementById('hint').innerHTML = 'Mode: <b>etiket terpilih</b> dari Daftar Etiket. <a href="#" onclick="window._abaikanIds=true;render();return false;">Ganti ke per tanggal</a> · Untuk PDF pilih <b>Destination → Save as PDF</b>.';
+    } else {
+      rows = await ambilData(key, basis);
+      sumber = basis === 'cetak' ? 'etiket yang ditandai dicetak pada tanggal tersebut' : 'etiket tanggal ' + fmtDate(key + 'T00:00:00');
+    }
+    LAST = { key, rows };
+    const tgl = (IDS.length && !window._abaikanIds && rows.length) ? (dateKey(rows[0].tanggal_dibuat) || key) : key;
+    sheet.innerHTML = bangunDokumen(rows, tgl, sumber);
+    document.title = 'BuktiSerahTerima_' + tgl;
+  } catch (e) {
+    sheet.innerHTML = '<div class="empty-note">Gagal memuat data: ' + esc(e.message || e) + '</div>';
+  }
+}
+function muatUlang(){ window._abaikanIds = true; render(); }
+
+function unduhWord(){
+  const style = document.getElementById('docStyle').textContent
+    .replace(/@page[^}]*}/, '@page Section1 { size: 21.0cm 29.7cm; margin: 1.2cm; }');
+  const html = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">'
+    + '<head><meta charset="utf-8"><title>Bukti Serah Terima</title>'
+    + '<!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View><w:Zoom>100</w:Zoom></w:WordDocument></xml><![endif]-->'
+    + '<style>' + style + ' .sheet{box-shadow:none;margin:0;padding:0;width:auto}</style></head>'
+    + '<body><div class="sheet">' + document.getElementById('sheet').innerHTML + '</div></body></html>';
+  const blob = new Blob(['﻿', html], { type: 'application/msword' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = document.title + '.doc';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+
+(async function(){
+  const { data: sess } = await supabase.auth.getSession();
+  if (!sess || !sess.session) {
+    document.getElementById('sheet').innerHTML = '<div class="empty-note">Sesi login tidak ditemukan. Buka halaman ini dari dalam aplikasi (setelah login).</div>';
+    return;
+  }
+  const { data: st } = await supabase.from('pengaturan').select('*');
+  (st||[]).forEach(r => SETTINGS[r.key] = r.value);
+
+  document.getElementById('fTanggal').value = params.get('date') || dateKey(new Date());
+  const b = params.get('basis');
+  if (b === 'cetak') document.getElementById('fBasis').value = 'cetak';
+  // Opsi "tanggal dicetak" hanya berguna bila kolom dicetak_at sudah ada di database
+  const probe = await supabase.from('etiket').select('dicetak_at').limit(1);
+  if (probe.error) {
+    document.getElementById('lblBasis').style.display = 'none';
+    document.getElementById('fBasis').value = 'etiket';
+  }
+  render();
+})();
+</script>
+</body>
+</html>
