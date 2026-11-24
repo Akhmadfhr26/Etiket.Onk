@@ -57,8 +57,14 @@
 <script src="../js/supabaseClient.js"></script>
 <script>
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function fmtDate(d){ if(!d) return ''; const s=String(d);
+  const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(s.trim()); // tanggal murni (mis. tanggal lahir): jangan lewat Date agar tidak geser zona waktu
+  if(m) return m[3]+'-'+m[2]+'-'+m[1];
+  const dt=new Date(d); if(isNaN(dt.getTime())) return s;
+  const p=n=>String(n).padStart(2,'0');
+  return p(dt.getDate())+'-'+p(dt.getMonth()+1)+'-'+dt.getFullYear(); }  // dd-mm-yyyy
 function fmtDateTime(d){ if(!d) return ''; const dt=new Date(d); if(isNaN(dt.getTime())) return String(d);
-  return dt.toLocaleDateString('id-ID')+' '+dt.toLocaleTimeString('id-ID',{hour:'2-digit',minute:'2-digit'}); }
+  return fmtDate(dt)+' '+dt.toLocaleTimeString('id-ID',{hour:'2-digit',minute:'2-digit'}); }
 function waktuLabel(v){
   if (v === 'sebelum') return 'SEBELUM MAKAN';
   if (v === 'sesudah') return 'SESUDAH MAKAN';
@@ -113,7 +119,7 @@ function autofitLabels(minScale){
       <div class="fit-content">
         <div class="pasien-block">
           <div class="pasien-row">${esc(d.nama_pasien)}</div>
-          <div class="pasien-sub">No.RM ${esc(d.no_rm)} &nbsp;|&nbsp; Lahir: ${esc(String(d.tanggal_lahir||'').split('T')[0] || '-')}</div>
+          <div class="pasien-sub">No.RM ${esc(d.no_rm)} &nbsp;|&nbsp; Lahir: ${esc(fmtDate(d.tanggal_lahir) || '-')}</div>
         </div>
         <div class="obat-box">
           <div class="obat-line">
