@@ -153,6 +153,25 @@ function autofitLabels(minScale){
   }
   window.addEventListener('resize', () => autofitLabels());
   window.addEventListener('beforeprint', () => autofitLabels());
+
+  /* ---- Tandai otomatis "sudah dicetak" setelah dialog cetak ditutup ----
+     TANYA_DULU = true  : muncul 1 konfirmasi (klik OK) supaya label tidak ditandai bila cetak dibatalkan
+     TANYA_DULU = false : langsung ditandai tanpa bertanya
+     (browser tetap memicu "afterprint" walau dialog dibatalkan, jadi false berisiko salah tandai) */
+  const TANYA_DULU = true;
+  const KOLOM_STATUS = 'dicetak_at';
+  window.addEventListener('afterprint', () => {
+    setTimeout(async () => {
+      if (!rows.length || !(KOLOM_STATUS in rows[0])) return;        // kolom status belum ada di database
+      const belum = rows.filter(r => !r[KOLOM_STATUS]);
+      if (!belum.length) return;                                       // semua sudah ditandai
+      if (TANYA_DULU && !confirm('Tandai ' + belum.length + ' etiket ini sebagai SUDAH DICETAK?')) return;
+      const at = new Date().toISOString();
+      const { error } = await supabase.from('etiket').update({ [KOLOM_STATUS]: at }).in('id', belum.map(r => r.id));
+      if (error) { console.warn('Gagal menandai status cetak:', error.message); return; }
+      belum.forEach(r => { r[KOLOM_STATUS] = at; });
+    }, 300);
+  });
 })();
 </script>
 </body>
