@@ -254,3 +254,11 @@ tr.row-etiket td:nth-child(2){padding-left:46px;}
 .sel-hidden{color:#9a5b00;font-size:12px;margin-left:6px;}
 .sel-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
 .sel-bar select{padding:8px 10px;border:1px solid var(--border);border-radius:10px;background:#fff;cursor:pointer;}
+
+/* ============================================================
+   TAMBAHAN: kartu "Data Klinis Formulir Sitostatika" (js/sitostatika.js)
+   ============================================================ */
+#sitoCard{border-left:4px solid var(--accent);}
+#sitoCard .hint a{color:var(--accent);font-weight:700;text-decoration:none;}
+#sitoCard .hint a:hover{text-decoration:underline;}
+#sitoCard .msg{margin:6px 0 10px;}
