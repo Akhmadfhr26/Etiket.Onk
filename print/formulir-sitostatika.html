@@ -105,7 +105,7 @@
   <span class="grow"></span>
   <button onclick="window.print()">🖨️ Cetak / Simpan PDF</button>
   <div class="warn hidden" id="warn" style="display:none;"></div>
-  <div class="hint" id="hint">Kolom yang berlatar kuning saat disorot bisa diklik dan diedit langsung sebelum dicetak (tidak mengubah data di aplikasi). Untuk PDF pilih <b>Destination → Save as PDF</b>, skala 100%, margin <b>None</b>.</div>
+  <div class="hint" id="hint">Kolom yang berlatar kuning saat disorot bisa diklik dan diedit langsung sebelum dicetak (tidak mengubah data di aplikasi). Untuk PDF pilih <b>Destination → Save as PDF</b>, skala 100%, margin <b>None</b>. Obat kemo yang diberikan beberapa hari digabung dalam <b>satu formulir</b> dan ditandai (H1-H3); mode per tanggal hanya memuat siklus yang Hari ke-1 jatuh pada tanggal tersebut.</div>
 </div>
 <div id="root"><div class="empty-note">Memuat data...</div></div>
 
@@ -169,18 +169,39 @@ function daftarDokter(){
 }
 
 /* ============================================================ data */
+/* ---- obat kemo beberapa hari (Hari ke-1 s/d ke-N) digabung dalam SATU formulir per siklus ---- */
+const SIKLUS_MAX = 30;   // jangkauan hari (maks. Hari ke-N) yang dicari dari Hari ke-1
+function hariKe(r){ const h = parseInt(r.hari_ke, 10); return h > 0 ? h : 1; }
+// tanggal Hari ke-1 dari sebuah etiket (tanggal_dibuat = tanggal mulai + (hari_ke - 1))
+function mulaiSiklus(r){ const k = dateKey(r.tanggal_dibuat); return k ? addDays(k, -(hariKe(r) - 1)) : ''; }
+function sigObat(r){ return JSON.stringify([r.nama_obat, r.dosis_mg, r.ambil, r.nama_pelarut, r.volume_pelarut_ml, r.cara_pemberian, r.obat_dosis, r.detail_obat || null]); }
+
 async function ambilEtiket(){
   if (IDS.length && !window._abaikanIds) {
     const { data, error } = await supabase.from('etiket').select('*').in('id', IDS);
     if (error) throw error;
-    return data || [];
+    const base = data || [];
+    // lengkapi dengan hari lanjutan dari obat yang sama pada siklus yang sama (mis. yang dicentang hanya Hari ke-1)
+    const rms = Array.from(new Set(base.map(r => r.no_rm).filter(Boolean)));
+    const keys = base.map(r => dateKey(r.tanggal_dibuat)).filter(Boolean).sort();
+    if (!rms.length || !keys.length) return base;
+    const from = new Date(addDays(keys[0], -SIKLUS_MAX) + 'T00:00:00').toISOString();
+    const to   = new Date(addDays(keys[keys.length - 1], SIKLUS_MAX + 1) + 'T00:00:00').toISOString();
+    const r2 = await supabase.from('etiket').select('*').in('no_rm', rms).gte('tanggal_dibuat', from).lt('tanggal_dibuat', to);
+    if (r2.error) return base;
+    const ciri = r => r.no_rm + '|' + mulaiSiklus(r) + '|' + sigObat(r);
+    const want = new Set(base.map(ciri));
+    const byId = new Map(base.map(r => [String(r.id), r]));
+    (r2.data || []).forEach(r => { if (want.has(ciri(r))) byId.set(String(r.id), r); });
+    return Array.from(byId.values());
   }
+  // per tanggal: siklus yang Hari ke-1 jatuh pada tanggal ini (hari lanjutan tidak dibuatkan formulir lagi)
   const key = document.getElementById('fTanggal').value;
-  const from = new Date(addDays(key,-2)+'T00:00:00').toISOString();
-  const to   = new Date(addDays(key,3)+'T00:00:00').toISOString();
+  const from = new Date(addDays(key, -1) + 'T00:00:00').toISOString();
+  const to   = new Date(addDays(key, SIKLUS_MAX + 1) + 'T00:00:00').toISOString();
   const { data, error } = await supabase.from('etiket').select('*').gte('tanggal_dibuat', from).lt('tanggal_dibuat', to);
   if (error) throw error;
-  return (data||[]).filter(r => dateKey(r.tanggal_dibuat) === key);
+  return (data || []).filter(r => mulaiSiklus(r) === key);
 }
 
 async function ambilKlinis(rows){
@@ -201,7 +222,7 @@ function cariKlinis(rm, key){
 function kelompokkan(rows){
   const map = new Map();
   rows.forEach(r => {
-    const dk = dateKey(r.tanggal_dibuat);
+    const dk = mulaiSiklus(r);   // tanggal Hari ke-1 = 1 formulir per pasien per siklus
     const k = String(r.no_rm || r.nama_pasien || '-') + '|' + dk;
     if (!map.has(k)) map.set(k, { key:k, nama:r.nama_pasien, rm:r.no_rm, lahir:r.tanggal_lahir, dateKey:dk, rows:[] });
     map.get(k).rows.push(r);
@@ -246,6 +267,38 @@ function barisObat(r){
   }];
 }
 
+/* Gabungkan baris obat yang sama di beberapa hari -> 1 baris + keterangan (H1-H3) */
+function labelHari(hs){
+  const out = []; let a = hs[0], b = hs[0];
+  for (let i = 1; i <= hs.length; i++) {
+    if (i < hs.length && hs[i] === b + 1) { b = hs[i]; continue; }
+    out.push(b > a ? 'H' + a + '-H' + b : 'H' + a);
+    a = b = hs[i];
+  }
+  return out.join(',');
+}
+function barisGabung(rows){
+  const map = new Map(), out = [];
+  rows.forEach(r => {
+    const h = hariKe(r);
+    barisObat(r).forEach(b => {
+      const k = JSON.stringify([b.nama, b.dosis, b.ambil, b.infus, b.rute]);
+      if (!map.has(k)) { const x = Object.assign({}, b, { hari: new Set() }); map.set(k, x); out.push(x); }
+      map.get(k).hari.add(h);
+    });
+  });
+  out.forEach(x => { x.hs = Array.from(x.hari).sort((a, b) => a - b); x.lbl = labelHari(x.hs); });
+  const lblPerNama = {};
+  out.forEach(x => { const n = String(x.nama || '').trim().toLowerCase(); (lblPerNama[n] = lblPerNama[n] || new Set()).add(x.lbl); });
+  out.forEach(x => {
+    const n = String(x.nama || '').trim().toLowerCase();
+    // tampilkan keterangan bila obat > 1 hari, bukan mulai Hari ke-1, atau obat sama punya jadwal berbeda
+    x.ket = (x.hs.length > 1 || x.hs[0] !== 1 || lblPerNama[n].size > 1) ? x.lbl : '';
+  });
+  return out;
+}
+function namaTampil(b){ return String(b.nama || '') + (b.ket ? ' (' + b.ket + ')' : ''); }
+
 /* ============================================================ render */
 function ed(field, val, extra){ return `<span class="ed" contenteditable="true" data-f="${field}" ${extra||''}>${esc(val)}</span>`; }
 
@@ -260,7 +313,7 @@ function halamanHtml(g, gi, hal, totalHal, barisHal){
   const filler = Math.max(0, BARIS_PER_HALAMAN - barisHal.length);
   const dataRows = barisHal.map(b => `
       <tr>
-        <td class="nm" contenteditable="true">${esc(b.nama)}</td>
+        <td class="nm" contenteditable="true">${esc(namaTampil(b))}</td>
         <td class="mid" contenteditable="true">${esc(b.dosis)}</td>
         <td class="mid" contenteditable="true">${esc(b.ambil)}</td>
         <td class="mid" contenteditable="true">${esc(b.infus)}</td>
@@ -368,7 +421,7 @@ function draw(){
   }
   let html = '';
   forms.forEach(g => {
-    const baris = g.rows.flatMap(barisObat);
+    const baris = barisGabung(g.rows);
     const totalHal = Math.max(1, Math.ceil(baris.length / BARIS_PER_HALAMAN));
     const gi = FORMS.indexOf(g);
     for (let h = 0; h < totalHal; h++) {
@@ -471,7 +524,7 @@ async function render(){
     if (IDS.length && !window._abaikanIds) {
       document.getElementById('lblTanggal').style.display = 'none';
       document.getElementById('btnTampil').style.display = 'none';
-      document.getElementById('hint').innerHTML = 'Mode: <b>etiket terpilih</b> dari Daftar Etiket (' + rows.length + ' etiket, ' + FORMS.length + ' formulir). <a href="#" onclick="window._abaikanIds=true;document.getElementById(\'lblTanggal\').style.display=\'\';document.getElementById(\'btnTampil\').style.display=\'\';render();return false;">Ganti ke per tanggal</a> · Kolom yang disorot kuning bisa diedit langsung sebelum dicetak · Untuk PDF pilih <b>Destination → Save as PDF</b>, margin <b>None</b>.';
+      document.getElementById('hint').innerHTML = 'Mode: <b>etiket terpilih</b> dari Daftar Etiket (' + rows.length + ' etiket, ' + FORMS.length + ' formulir). <a href="#" onclick="window._abaikanIds=true;document.getElementById(\'lblTanggal\').style.display=\'\';document.getElementById(\'btnTampil\').style.display=\'\';render();return false;">Ganti ke per tanggal</a> · Kolom yang disorot kuning bisa diedit langsung sebelum dicetak · Untuk PDF pilih <b>Destination → Save as PDF</b>, margin <b>None</b>. Obat kemo beberapa hari digabung dalam satu formulir (H1-H3).';
     }
     draw();
   } catch (e) {
