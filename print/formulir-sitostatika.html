@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<title>Formulir Pencampuran Obat Sitostatika</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style id="pageStyle">@page { size: 297mm 210mm; margin: 0; }</style>
+<style>
+  :root { --pw: 297mm; --ph: 210mm; --pad: 7mm; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: Arial, Helvetica, "Segoe UI", sans-serif; font-size: 8.5pt; color: #000; background: #eef0f3;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+
+  /* ---------- halaman ---------- */
+  .page {
+    width: var(--pw); height: calc(var(--ph) - 0.6mm); padding: var(--pad);
+    margin: 12px auto; background: #fff; box-shadow: 0 1px 6px rgba(0,0,0,.18);
+    position: relative; overflow: hidden; page-break-after: always; break-after: page;
+  }
+  .page:last-child { page-break-after: auto; break-after: auto; }
+
+  /* ---------- kop ---------- */
+  .kop { display: flex; align-items: center; justify-content: space-between; gap: 4mm; height: 27mm; }
+  .kop img { height: 24mm; width: auto; max-width: 28mm; object-fit: contain; }
+  .kop .tengah { flex: 1; text-align: center; line-height: 1.22; }
+  .kop .l1 { font-size: 10.5pt; font-weight: bold; }
+  .kop .l2 { font-size: 10.5pt; font-weight: bold; }
+  .kop .l3 { font-size: 10.5pt; font-weight: bold; }
+  .kop .l4 { font-size: 11pt; font-weight: bold; }
+  .kop .l5 { font-size: 8.5pt; }
+  .judul { text-align: center; font-weight: bold; font-size: 12pt; margin: 1.5mm 0 1.5mm; letter-spacing: .01em; }
+
+  /* ---------- tabel umum ---------- */
+  table { border-collapse: collapse; table-layout: fixed; width: 100%; }
+  td, th { border: 0.3mm solid #000; padding: 0.8mm 1.4mm; vertical-align: middle; overflow-wrap: anywhere; }
+  th { font-weight: bold; text-align: center; }
+  .b { font-weight: bold; }
+  .c { text-align: center; }
+
+  /* ---------- header identitas ---------- */
+  table.head td { height: 7mm; font-size: 8.8pt; }
+  table.head .k { font-weight: bold; display: inline-block; min-width: 24mm; }
+  table.head .k.s { min-width: 9mm; }
+  table.head .k.m { min-width: 19mm; }
+  table.head .top { vertical-align: top; }
+
+  /* ---------- tabel obat ---------- */
+  table.obat { margin-top: 1.2mm; }
+  table.obat th { font-size: 8pt; height: 13mm; line-height: 1.15; }
+  table.obat th.hd { text-transform: none; }
+  table.obat td { height: 8.8mm; font-size: 8.6pt; }
+  table.obat td.nm { font-weight: bold; }
+  table.obat td.mid { text-align: center; }
+
+  /* ---------- footer verifikasi ---------- */
+  table.foot { margin-top: 1.2mm; }
+  table.foot td { height: 9.8mm; font-size: 8.2pt; }
+  table.foot td.lab { font-weight: bold; }
+  table.foot td.hdr { font-weight: bold; text-align: center; }
+  table.foot td.chk { text-align: center; font-size: 9pt; }
+  table.foot td.top { vertical-align: top; }
+
+  /* ---------- sel yang bisa diedit (hanya layar) ---------- */
+  .ed { outline: none; }
+  .ed:empty::before { content: '\200B'; }
+  td[contenteditable], .ed { cursor: text; }
+  @media screen {
+    td[contenteditable]:hover, .ed:hover { background: #fff9d6; }
+    td[contenteditable]:focus, .ed:focus { background: #fff3a8; box-shadow: inset 0 0 0 1px #d4a900; }
+  }
+
+  /* ---------- bar kontrol (hanya layar) ---------- */
+  .bar { max-width: 297mm; margin: 12px auto 0; padding: 10px 12px; background: #fff; border-radius: 6px; box-shadow: 0 1px 6px rgba(0,0,0,.12);
+         font-family: Arial, sans-serif; font-size: 13px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .bar label { color: #444; }
+  .bar input, .bar select { font-size: 13px; padding: 4px 6px; }
+  .bar button { font-size: 13px; padding: 6px 12px; cursor: pointer; }
+  .bar .grow { flex: 1; }
+  .bar .hint { width: 100%; color: #666; font-size: 11.5px; }
+  .bar .warn { width: 100%; color: #92400e; background: #fff7e6; border: 1px solid #f5d9a6; border-radius: 5px; padding: 5px 8px; font-size: 12px; }
+  .hapus { position: absolute; top: 2mm; right: 3mm; cursor: pointer; font-size: 8.5pt; color: #b00020; border: 1px solid #b00020; border-radius: 3px; padding: 0 5px; background: #fff; z-index: 3; }
+  .metode { font-size: 8pt; padding: 0 1px; margin-left: 1mm; }
+  .empty-note { max-width: 297mm; margin: 14px auto; padding: 30px; text-align: center; font-size: 11pt; background: #fff; border-radius: 6px; font-family: Arial, sans-serif; }
+
+  @media print {
+    body { background: #fff; }
+    .bar, .noprint { display: none !important; }
+    .page { margin: 0; box-shadow: none; }
+  }
+</style>
+</head>
+<body>
+<div class="bar" id="bar">
+  <label id="lblTanggal">Tanggal <input type="date" id="fTanggal"></label>
+  <button id="btnTampil" onclick="muatUlang()">Tampilkan</button>
+  <label>Kertas
+    <select id="fKertas" onchange="ubahKertas()">
+      <option value="a4">A4 Landscape (297×210 mm)</option>
+      <option value="f4">F4 Landscape (330×215 mm)</option>
+    </select>
+  </label>
+  <span class="grow"></span>
+  <button onclick="window.print()">🖨️ Cetak / Simpan PDF</button>
+  <div class="warn hidden" id="warn" style="display:none;"></div>
+  <div class="hint" id="hint">Kolom yang berlatar kuning saat disorot bisa diklik dan diedit langsung sebelum dicetak (tidak mengubah data di aplikasi). Untuk PDF pilih <b>Destination → Save as PDF</b>, skala 100%, margin <b>None</b>.</div>
+</div>
+<div id="root"><div class="empty-note">Memuat data...</div></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../js/supabaseClient.js"></script>
+<script>
+/* ============================================================
+   KONFIGURASI KOP & DEFAULT (ubah di sini bila perlu)
+   ============================================================ */
+const KOP = {
+  logoKiri:  '../assets/logo-kab.png',   // lambang Kab. Kutai Kartanegara
+  logoKanan: '../assets/logo-rs.png',    // logo RSUD
+  l1: 'PEMERINTAH KABUPATEN KUTAI KARTANEGARA',
+  l2: 'DINAS KESEHATAN',
+  l3: 'UNIT ORGANISASI BERSIFAT KHUSUS',
+  l4: 'RUMAH SAKIT UMUM DAERAH AJI MUHAMMAD PARIKESIT',
+  l5: 'Jalan Ratu Agung No.1 Tenggarong Seberang Telepon (0541) 661015 Kode Pos 75572',
+  l6: 'Laman : www.rsamp.kukarkab.go.id &nbsp; Pos-el : rsudamparikesit@yahoo.com'
+};
+const RUANG_DEFAULT = 'Murai Lt. 3';
+const DOKTER_DEFAULT = ['dr. Muhammad', 'dr. Ridho'];
+const BARIS_PER_HALAMAN = 7;   // sesuai template (baris 15-21)
+const KERTAS = { a4: { w: '297mm', h: '210mm' }, f4: { w: '330mm', h: '215mm' } };
+
+/* ============================================================ helper */
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function pad(n){return String(n).padStart(2,'0');}
+function dateKey(d){ if(!d) return ''; const dt=new Date(d); if(isNaN(dt.getTime())) return '';
+  return dt.getFullYear()+'-'+pad(dt.getMonth()+1)+'-'+pad(dt.getDate()); }
+function addDays(key,n){ const [y,m,d]=key.split('-').map(Number); return dateKey(new Date(y,m-1,d+n)); }
+function fmtTgl(d){ if(!d) return ''; const s=String(d).trim();
+  const m=/^(\d{4})-(\d{2})-(\d{2})/.exec(s);          // tanggal murni / ISO: jangan lewat Date agar tidak geser zona waktu
+  if(m && s.length<=10) return m[3]+'-'+m[2]+'-'+m[1];
+  const dt=new Date(d); if(isNaN(dt.getTime())) return s;
+  return pad(dt.getDate())+'-'+pad(dt.getMonth()+1)+'-'+dt.getFullYear(); }
+function fmtKey(key){ if(!key) return ''; const [y,m,d]=key.split('-'); return d+'-'+m+'-'+y; }
+function numTxt(v){ if(v==null||v==='') return ''; const n=Number(v); return isNaN(n)?String(v):String(Math.round(n*100)/100); }
+function urutId(a,b){ return (new Date(a.tanggal_dibuat)-new Date(b.tanggal_dibuat)) || String(a.id).localeCompare(String(b.id),undefined,{numeric:true}); }
+
+/* BSA (m²): BB kg, TB cm */
+function hitungBSA(bb, tb, metode){
+  bb = parseFloat(bb); tb = parseFloat(tb);
+  if (!(bb > 0) || !(tb > 0)) return null;
+  const v = metode === 'dubois' ? 0.007184 * Math.pow(bb, 0.425) * Math.pow(tb, 0.725) : Math.sqrt(tb * bb / 3600);
+  return Math.round(v * 100) / 100;
+}
+
+/* ============================================================ state */
+const params = new URLSearchParams(location.search);
+const IDS = (params.get('ids')||'').split(',').filter(Boolean);
+let SETTINGS = {};
+let KLINIS = [];
+let KLINIS_ERR = '';
+let FORMS = [];            // [{key, nama, rm, lahir, dateKey, rows:[...etiket], klinis}]
+let EXC = new Set();       // formulir yang dikeluarkan dari dokumen (hanya di layar)
+
+function daftarDokter(){
+  const t = SETTINGS.dokter_dpjp;
+  const arr = t ? String(t).split(/\r?\n|,/).map(s=>s.trim()).filter(Boolean) : [];
+  return arr.length ? arr : DOKTER_DEFAULT;
+}
+
+/* ============================================================ data */
+async function ambilEtiket(){
+  if (IDS.length && !window._abaikanIds) {
+    const { data, error } = await supabase.from('etiket').select('*').in('id', IDS);
+    if (error) throw error;
+    return data || [];
+  }
+  const key = document.getElementById('fTanggal').value;
+  const from = new Date(addDays(key,-2)+'T00:00:00').toISOString();
+  const to   = new Date(addDays(key,3)+'T00:00:00').toISOString();
+  const { data, error } = await supabase.from('etiket').select('*').gte('tanggal_dibuat', from).lt('tanggal_dibuat', to);
+  if (error) throw error;
+  return (data||[]).filter(r => dateKey(r.tanggal_dibuat) === key);
+}
+
+async function ambilKlinis(rows){
+  KLINIS_ERR = '';
+  const rms = Array.from(new Set(rows.map(r => r.no_rm).filter(Boolean)));
+  if (!rms.length) return [];
+  const { data, error } = await supabase.from('formulir_sitostatika').select('*').in('no_rm', rms);
+  if (error) { KLINIS_ERR = error.message || String(error); return []; }
+  return data || [];
+}
+
+// Data klinis kunjungan terdekat pada/sebelum tanggal formulir (Hari ke-2, ke-3 ikut kunjungan yang sama)
+function cariKlinis(rm, key){
+  const list = KLINIS.filter(k => k.no_rm === rm).sort((a,b) => String(b.tanggal).localeCompare(String(a.tanggal)));
+  return list.find(k => String(k.tanggal).slice(0,10) <= key) || list[list.length-1] || null;
+}
+
+function kelompokkan(rows){
+  const map = new Map();
+  rows.forEach(r => {
+    const dk = dateKey(r.tanggal_dibuat);
+    const k = String(r.no_rm || r.nama_pasien || '-') + '|' + dk;
+    if (!map.has(k)) map.set(k, { key:k, nama:r.nama_pasien, rm:r.no_rm, lahir:r.tanggal_lahir, dateKey:dk, rows:[] });
+    map.get(k).rows.push(r);
+  });
+  const list = Array.from(map.values());
+  list.sort((a,b) => a.dateKey.localeCompare(b.dateKey) || String(a.nama||'').localeCompare(String(b.nama||''),'id'));
+  list.forEach(g => { g.rows.sort(urutId); g.klinis = cariKlinis(g.rm, g.dateKey); });
+  return list;
+}
+
+/* ============================================================ baris obat */
+function dosisDariTeks(obatDosis){
+  const m = /\(([^)]*\d[^)]*)\)/.exec(String(obatDosis||''));
+  return m ? m[1].trim() : '';
+}
+// Rute pemberian = isi "Cara Pemberian" yang diinput di form Entri, apa adanya (tidak ada IV otomatis)
+function ruteTeks(cara){
+  return String(cara||'').trim();
+}
+function infusTeks(r){
+  const nama = String(r.nama_pelarut||'').trim();
+  if (!nama) return '';
+  const vol = (r.volume_pelarut_ml != null && r.volume_pelarut_ml !== '') ? ' ' + numTxt(r.volume_pelarut_ml) + ' ml' : '';
+  return nama + vol;
+}
+// satu baris etiket -> 1+ baris obat pada formulir (etiket gabungan = beberapa obat dalam 1 pelarut)
+function barisObat(r){
+  const infus = infusTeks(r), rute = ruteTeks(r.cara_pemberian);
+  const det = Array.isArray(r.detail_obat) && r.detail_obat.length > 1 ? r.detail_obat : null;
+  if (det) {
+    return det.map(d => ({
+      nama: d.obatNama || '',
+      dosis: (d.dosisMg != null && d.dosisMg !== '') ? numTxt(d.dosisMg) + ' mg' : dosisDariTeks(d.obatDosis),
+      ambil: d.ambil || '', infus, rute
+    }));
+  }
+  const namaFallback = String(r.obat_dosis||'').replace(/\bInjeksi\b\s*/gi,'').replace(/\(.*?\)/g,'').replace(/\s{2,}/g,' ').trim();
+  return [{
+    nama: r.nama_obat || namaFallback,
+    dosis: (r.dosis_mg != null && r.dosis_mg !== '') ? numTxt(r.dosis_mg) + ' mg' : dosisDariTeks(r.obat_dosis),
+    ambil: r.ambil || '', infus, rute
+  }];
+}
+
+/* ============================================================ render */
+function ed(field, val, extra){ return `<span class="ed" contenteditable="true" data-f="${field}" ${extra||''}>${esc(val)}</span>`; }
+
+function halamanHtml(g, gi, hal, totalHal, barisHal){
+  const k = g.klinis || {};
+  const metode = k.metode_bsa === 'dubois' ? 'dubois' : 'mosteller';
+  const dokter = k.dokter || daftarDokter().join(' / ');
+  const ruang = k.ruang || RUANG_DEFAULT;
+  let bsa = (k.bsa != null && k.bsa !== '') ? numTxt(k.bsa) : '';
+  if (!bsa) { const h = hitungBSA(k.bb, k.tb, metode); if (h != null) bsa = String(h); }
+
+  const filler = Math.max(0, BARIS_PER_HALAMAN - barisHal.length);
+  const dataRows = barisHal.map(b => `
+      <tr>
+        <td class="nm" contenteditable="true">${esc(b.nama)}</td>
+        <td class="mid" contenteditable="true">${esc(b.dosis)}</td>
+        <td class="mid" contenteditable="true">${esc(b.ambil)}</td>
+        <td class="mid" contenteditable="true">${esc(b.infus)}</td>
+        <td class="mid" contenteditable="true">${esc(b.rute)}</td>
+        <td contenteditable="true"></td><td contenteditable="true"></td><td contenteditable="true"></td><td contenteditable="true"></td><td contenteditable="true"></td>
+      </tr>`).join('');
+  const kosong = Array.from({length: filler}).map(() => `
+      <tr>${'<td contenteditable="true"></td>'.repeat(10)}</tr>`).join('');
+
+  return `
+  <section class="page" data-g="${gi}" data-metode="${metode}">
+    <span class="hapus noprint" data-hg="${gi}" title="Keluarkan formulir ini dari dokumen cetak (data di aplikasi tidak berubah)">✕ Hapus formulir ini</span>
+    <div class="kop">
+      <img src="${KOP.logoKiri}" alt="">
+      <div class="tengah">
+        <div class="l1">${KOP.l1}</div>
+        <div class="l2">${KOP.l2}</div>
+        <div class="l3">${KOP.l3}</div>
+        <div class="l4">${KOP.l4}</div>
+        <div class="l5">${KOP.l5}</div>
+        <div class="l5">${KOP.l6}</div>
+      </div>
+      <img src="${KOP.logoKanan}" alt="">
+    </div>
+    <div class="judul">FORMULIR PENCAMPURAN OBAT SITOSTATIKA${totalHal > 1 ? ` <span style="font-size:9pt;font-weight:normal;">(hal. ${hal}/${totalHal})</span>` : ''}</div>
+
+    <table class="head">
+      <colgroup><col style="width:30%"><col style="width:14.5%"><col style="width:34%"><col></colgroup>
+      <tr>
+        <td><span class="k">NAMA PASIEN</span>: ${ed('nama', g.nama)}</td>
+        <td><span class="k s">BB</span>: ${ed('bb', numTxt(k.bb))} kg</td>
+        <td><span class="k m">DPJP</span>: ${ed('dokter', dokter)}</td>
+        <td><span class="k m">TANGGAL</span>: ${ed('tanggal', fmtKey(g.dateKey))}</td>
+      </tr>
+      <tr>
+        <td><span class="k">NO RM</span>: ${ed('rm', g.rm)}</td>
+        <td><span class="k s">TB</span>: ${ed('tb', numTxt(k.tb))} cm</td>
+        <td rowspan="2" class="top"><span class="k m">DIAGNOSA</span>: ${ed('diagnosa', k.diagnosa || '')}</td>
+        <td rowspan="2" class="top"><span class="k m">RUANG RAWAT</span>: ${ed('ruang', ruang)}</td>
+      </tr>
+      <tr>
+        <td><span class="k">TGL LAHIR</span>: ${ed('lahir', fmtTgl(g.lahir))}</td>
+        <td><span class="k s">BSA</span>: ${ed('bsa', bsa)} m²
+          <select class="metode noprint" title="Metode perhitungan BSA">
+            <option value="mosteller"${metode==='mosteller'?' selected':''}>Mosteller</option>
+            <option value="dubois"${metode==='dubois'?' selected':''}>DuBois</option>
+          </select></td>
+      </tr>
+    </table>
+
+    <table class="obat">
+      <colgroup><col style="width:14%"><col style="width:7.7%"><col style="width:7.7%"><col style="width:14%"><col style="width:8.4%"><col style="width:10.5%"><col style="width:8.4%"><col style="width:9.1%"><col style="width:9.8%"><col></colgroup>
+      <tr>
+        <th>NAMA OBAT</th><th>DOSIS</th><th>vol. obat diambil (ml)</th><th>Nama dan Vol (ml) infus</th><th>RUTE PEMBERIAN</th>
+        <th>Exp.Date Obat sebelum direkonstitusi</th><th>STABILITAS</th><th>KONDISI PENYIMPANAN</th><th>NAMA DAGANG</th><th>NO. BATCH</th>
+      </tr>
+      ${dataRows}${kosong}
+    </table>
+
+    <table class="foot">
+      <colgroup><col style="width:15.4%"><col style="width:8.8%"><col style="width:9.8%"><col style="width:12.6%"><col style="width:3.2%"><col style="width:13.3%"><col style="width:3.2%"><col style="width:11.9%"><col style="width:11.9%"><col></colgroup>
+      <tr>
+        <td rowspan="2" class="lab">RESEP DAN PROTOKOL DITERIMA</td>
+        <td class="lab">JAM</td><td contenteditable="true"></td>
+        <td colspan="4" class="hdr">VERIFIKASI</td>
+        <td rowspan="2" class="lab c">Label disiapkan Oleh</td>
+        <td rowspan="2" class="lab c">Obat Diserahkan Oleh</td>
+        <td class="hdr">KETERANGAN</td>
+      </tr>
+      <tr>
+        <td class="lab">STAF FARMASI</td><td contenteditable="true"></td>
+        <td colspan="2" class="top">NAMA:</td><td colspan="2" class="top">Tanda Tangan</td>
+        <td rowspan="5" class="top" contenteditable="true"></td>
+      </tr>
+      <tr>
+        <td rowspan="2" class="lab">OBAT SELESAI DIREKONSTITUSI</td>
+        <td class="lab">JAM</td><td contenteditable="true"></td>
+        <td>Identitas Pasien</td><td class="chk">√</td><td>Rute Pemberian</td><td class="chk">√</td>
+        <td rowspan="2" class="top">NAMA:</td><td rowspan="2" class="top">NAMA:</td>
+      </tr>
+      <tr>
+        <td class="lab">STAF FARMASI</td><td contenteditable="true"></td>
+        <td>Regimen Obat</td><td class="chk">√</td><td>Kompatibilitas</td><td class="chk">√</td>
+      </tr>
+      <tr>
+        <td rowspan="2" class="lab">OBAT DITERIMA OLEH ...................</td>
+        <td class="lab">JAM</td><td contenteditable="true"></td>
+        <td>Dosis</td><td class="chk">√</td><td>Stabilitas</td><td class="chk">√</td>
+        <td rowspan="2" class="top">Tanda Tangan:</td><td rowspan="2" class="top">Tanda Tangan:</td>
+      </tr>
+      <tr>
+        <td class="lab">STAF FARMASI</td><td contenteditable="true"></td>
+        <td colspan="4"></td>
+      </tr>
+    </table>
+  </section>`;
+}
+
+function draw(){
+  const root = document.getElementById('root');
+  const forms = FORMS.filter(g => !EXC.has(g.key));
+  if (!forms.length) {
+    root.innerHTML = '<div class="empty-note">Tidak ada etiket untuk dibuatkan formulir' + (FORMS.length ? ' (semua formulir sudah dikeluarkan dari dokumen).' : '.') + '</div>';
+    refreshWarn(); return;
+  }
+  let html = '';
+  forms.forEach(g => {
+    const baris = g.rows.flatMap(barisObat);
+    const totalHal = Math.max(1, Math.ceil(baris.length / BARIS_PER_HALAMAN));
+    const gi = FORMS.indexOf(g);
+    for (let h = 0; h < totalHal; h++) {
+      html += halamanHtml(g, gi, h + 1, totalHal, baris.slice(h * BARIS_PER_HALAMAN, (h + 1) * BARIS_PER_HALAMAN));
+    }
+  });
+  root.innerHTML = html;
+  document.title = 'FormulirSitostatika_' + (forms.length === 1 ? String(forms[0].nama||'').replace(/\s+/g,'_') + '_' + forms[0].dateKey : forms.length + 'pasien');
+  refreshWarn();
+}
+
+function refreshWarn(){
+  const w = document.getElementById('warn');
+  const msgs = [];
+  if (KLINIS_ERR) {
+    msgs.push('Tabel data klinis belum tersedia di database (' + esc(KLINIS_ERR) + '). Jalankan <b>supabase/schema_formulir_sitostatika.sql</b> di Supabase SQL Editor. Sementara itu BB/TB/BSA/diagnosa/dokter bisa diketik manual di layar ini.');
+  } else {
+    const tanpa = FORMS.filter(g => !EXC.has(g.key) && !g.klinis);
+    if (tanpa.length) msgs.push(tanpa.length + ' formulir belum punya data klinis (BB, TB, BSA, diagnosa, dokter): ' + tanpa.slice(0,4).map(g => esc(g.nama)).join(', ') + (tanpa.length > 4 ? ', ...' : '') + '. Isi di halaman <b>Entri</b> (kartu "Data Klinis Formulir Sitostatika") atau ketik manual di layar ini.');
+  }
+  if (EXC.size) msgs.push('✕ ' + EXC.size + ' formulir dikeluarkan dari dokumen. <a href="#" onclick="EXC.clear();draw();return false;">Kembalikan semua</a>');
+  w.style.display = msgs.length ? '' : 'none';
+  w.innerHTML = msgs.join('<br>');
+}
+
+/* ============================================================ interaksi */
+// BB / TB / metode berubah -> hitung ulang BSA; nilai kolom identitas disamakan antar halaman milik formulir yang sama
+function sinkronkan(page, field, value, skipEl){
+  const g = page.dataset.g;
+  document.querySelectorAll('.page[data-g="' + g + '"]').forEach(p => {
+    const el = p.querySelector('[data-f="' + field + '"]');
+    if (el && el !== skipEl && el.textContent !== value) el.textContent = value;
+  });
+}
+function hitungUlangBSA(page){
+  const bb = page.querySelector('[data-f="bb"]').textContent.replace(',', '.');
+  const tb = page.querySelector('[data-f="tb"]').textContent.replace(',', '.');
+  const h = hitungBSA(bb, tb, page.dataset.metode);
+  if (h == null) return;
+  page.querySelector('[data-f="bsa"]').textContent = String(h);
+  sinkronkan(page, 'bsa', String(h));
+}
+document.addEventListener('input', e => {
+  const el = e.target.closest ? e.target.closest('.ed') : null;
+  if (!el) return;
+  const page = el.closest('.page'); if (!page) return;
+  const f = el.dataset.f;
+  sinkronkan(page, f, el.textContent, el);
+  if (f === 'bb' || f === 'tb') {
+    hitungUlangBSA(page);
+  }
+});
+document.addEventListener('change', e => {
+  const sel = e.target.closest ? e.target.closest('select.metode') : null;
+  if (!sel) return;
+  const page = sel.closest('.page');
+  const g = page.dataset.g;
+  document.querySelectorAll('.page[data-g="' + g + '"]').forEach(p => {
+    p.dataset.metode = sel.value;
+    const s = p.querySelector('select.metode'); if (s) s.value = sel.value;
+  });
+  hitungUlangBSA(page);
+});
+document.addEventListener('click', e => {
+  const hp = e.target.closest ? e.target.closest('[data-hg]') : null;
+  if (!hp) return;
+  const g = FORMS[parseInt(hp.dataset.hg, 10)];
+  if (!g) return;
+  if (!confirm('Keluarkan formulir ' + (g.nama || 'pasien ini') + ' dari dokumen cetak?\n(Hanya dari dokumen ini; data di aplikasi tidak dihapus.)')) return;
+  EXC.add(g.key); draw();
+});
+// Enter di sel tabel tidak menambah baris baru
+document.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && e.target.isContentEditable) { e.preventDefault(); }
+});
+// tempel sebagai teks polos
+document.addEventListener('paste', e => {
+  if (!e.target.isContentEditable) return;
+  e.preventDefault();
+  const t = (e.clipboardData || window.clipboardData).getData('text/plain').replace(/\s*\n\s*/g, ' ');
+  document.execCommand('insertText', false, t);
+});
+
+function ubahKertas(){
+  const k = KERTAS[document.getElementById('fKertas').value] || KERTAS.a4;
+  document.documentElement.style.setProperty('--pw', k.w);
+  document.documentElement.style.setProperty('--ph', k.h);
+  document.getElementById('pageStyle').textContent = '@page { size: ' + k.w + ' ' + k.h + '; margin: 0; }';
+  try { localStorage.setItem('sito_kertas', document.getElementById('fKertas').value); } catch (e) {}
+}
+
+async function render(){
+  const root = document.getElementById('root');
+  root.innerHTML = '<div class="empty-note">Memuat data...</div>';
+  try {
+    const rows = await ambilEtiket();
+    KLINIS = await ambilKlinis(rows);
+    EXC = new Set();
+    FORMS = kelompokkan(rows);
+    if (IDS.length && !window._abaikanIds) {
+      document.getElementById('lblTanggal').style.display = 'none';
+      document.getElementById('btnTampil').style.display = 'none';
+      document.getElementById('hint').innerHTML = 'Mode: <b>etiket terpilih</b> dari Daftar Etiket (' + rows.length + ' etiket, ' + FORMS.length + ' formulir). <a href="#" onclick="window._abaikanIds=true;document.getElementById(\'lblTanggal\').style.display=\'\';document.getElementById(\'btnTampil\').style.display=\'\';render();return false;">Ganti ke per tanggal</a> · Kolom yang disorot kuning bisa diedit langsung sebelum dicetak · Untuk PDF pilih <b>Destination → Save as PDF</b>, margin <b>None</b>.';
+    }
+    draw();
+  } catch (e) {
+    root.innerHTML = '<div class="empty-note">Gagal memuat data: ' + esc(e.message || e) + '</div>';
+  }
+}
+function muatUlang(){ window._abaikanIds = true; render(); }
+
+(async function(){
+  const { data: sess } = await supabase.auth.getSession();
+  if (!sess || !sess.session) {
+    document.getElementById('root').innerHTML = '<div class="empty-note">Sesi login tidak ditemukan. Buka halaman ini dari dalam aplikasi (setelah login).</div>';
+    return;
+  }
+  const { data: st } = await supabase.from('pengaturan').select('*');
+  (st||[]).forEach(r => SETTINGS[r.key] = r.value);
+  document.getElementById('fTanggal').value = params.get('date') || dateKey(new Date());
+  try { const k = localStorage.getItem('sito_kertas'); if (k && KERTAS[k]) document.getElementById('fKertas').value = k; } catch (e) {}
+  ubahKertas();
+  render();
+})();
+</script>
+</body>
+</html>
