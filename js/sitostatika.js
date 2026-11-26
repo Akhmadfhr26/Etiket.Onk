@@ -286,7 +286,7 @@
         const b = document.createElement('button');
         b.className = 'btn ghost small';
         b.textContent = '🧾 Formulir Sitostatika';
-        b.title = 'Formulir pencampuran obat sitostatika: semua pasien pada tanggal yang dipilih';
+        b.title = 'Formulir pencampuran obat sitostatika: pasien yang Hari ke-1 kemoterapinya jatuh pada tanggal yang dipilih (obat beberapa hari digabung, ditandai H1-H3)';
         b.onclick = () => window.bukaFormulirSito(false);
         return b;
       });
@@ -307,7 +307,7 @@
         const b = document.createElement('button');
         b.className = 'btn';
         b.textContent = '🧾 Formulir Sitostatika';
-        b.title = 'Formulir pencampuran obat sitostatika untuk etiket yang dicentang (1 formulir per pasien per hari)';
+        b.title = 'Formulir pencampuran obat sitostatika untuk etiket yang dicentang (1 formulir per pasien per siklus; obat beberapa hari digabung, ditandai H1-H3)';
         b.onclick = () => window.bukaFormulirSito(true);
         return b;
       });
